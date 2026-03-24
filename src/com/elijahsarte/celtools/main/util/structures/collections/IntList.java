@@ -1,0 +1,649 @@
+package com.elijahsarte.celtools.main.util.structures.collections;
+
+import com.elijahsarte.celtools.main.util.CollectionsEx;
+import com.elijahsarte.celtools.main.util.MathEx;
+import com.elijahsarte.celtools.main.util.OptionalEx;
+import com.elijahsarte.celtools.main.util.function.blocks.switchloop.ConditionalCase;
+import com.elijahsarte.celtools.main.util.function.blocks.switchloop.SwitchIf;
+import com.elijahsarte.celtools.main.util.function.fnvals.BiTuple;
+import com.elijahsarte.celtools.main.util.structures.bounds.IntegerBounds;
+
+import java.lang.reflect.Array;
+import java.util.*;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.stream.Collector;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
+
+import static com.elijahsarte.celtools.main.util.ProgrammingEx.*;
+
+public final class IntList implements List<Integer> {
+
+    private final List<IntegerBounds> list = new ArrayList<>();
+
+    private int firstElem;
+    private int lastElem;
+
+    private int size;
+
+    private boolean raw = false;
+
+
+    public IntList(IntList list) {
+        CollectionsEx.copy(this.list, list.list);
+        this.firstElem = list.firstElem;
+        this.lastElem = list.lastElem;
+        this.size = list.size;
+    }
+    public IntList(Collection<? extends Integer> list) {
+        this(CollectionsEx.toPrimitiveInt(list));
+    }
+    public IntList(int... providedNums) {
+
+        int firstElem = INVALID_INT;
+        int lastElem = INVALID_INT;
+
+        int[] nums = Arrays.stream(providedNums).sorted().toArray();
+        if (nums.length == 0) return;
+        this.firstElem = nums[0];
+
+        List<Double> sizes = new ArrayList<>(nums.length);
+        double lastSize = 0;
+        for (int num : nums) {
+
+            if (invalid(firstElem)) {
+                firstElem = num;
+                lastElem = num;
+                continue;
+            }
+            if (num - lastElem > 1) {
+                list.add(new IntegerBounds(firstElem, lastElem));
+                sizes.add(lastSize += (lastElem - firstElem + 1));
+                firstElem = num;
+                lastElem = num;
+                continue;
+            }
+            lastElem = num;
+
+        }
+        list.add(new IntegerBounds(firstElem, lastElem));
+        sizes.add(lastSize + (lastElem - firstElem + 1));
+
+        this.lastElem = lastElem;
+        this.size = nums.length;
+
+    }
+
+
+    private BiTuple<IntegerBounds, Integer> getBd(int idx) {
+        outOfBounds(idx);
+        int offset = 0;
+        for (IntegerBounds bds : list) {
+            if (bds.getLength() == 0 && offset == idx) return BiTuple.of(bds, 0);
+            if (idx >= offset && idx <= (offset + bds.getLength())) return BiTuple.of(bds, idx - offset);
+            offset += Math.max(bds.getLength() + 1, 1);
+        }
+        throwOutOfBounds(idx);
+        return null;
+    }
+    public Integer get(int idx) {
+        outOfBounds(idx);
+        if (idx == 0) return firstElem;
+        if (idx == size() - 1) return lastElem;
+        return varOper(getBd(idx),
+                bdRes -> bdRes.first().getLowerBound() + bdRes.second());
+    }
+    public IntList discontinuities() {
+        return list.size() <= 1 ? new IntList() : Stream.concat(
+                Stream.of(list.get(0).getUpperBound(), CollectionsEx.lastElem(list).getLowerBound()),
+                list.stream().skip(1).flatMap(IntegerBounds::streamBds).filter(i -> i != CollectionsEx.lastElem(list).getUpperBound())
+        ).collect(toIntList());
+    }
+
+    @Override
+    public Integer set(int index, Integer element) {
+        throw new UnsupportedOperationException("Cannot insert number at index");
+    }
+    @Override
+    public void add(int index, Integer element) {
+        throw new UnsupportedOperationException("Cannot insert number at index");
+    }
+
+    private int probableIndex(int num) {
+        return MathEx.roundInt(MathEx.divide(num, MathEx.divide(lastElem - firstElem, list.size() - 1)));
+    }
+
+    private int bdsIndexOf(int num) {
+        if (list.isEmpty()) return -1;
+        return CollectionsEx.binarySearchBds(list, num, probableIndex(num));
+    }
+    public int indexOf(int num) {
+        if (list.isEmpty()) return -1;
+        int bdsIndex = bdsIndexOf(num);
+        if (bdsIndex == -1) return -1;
+        return IntStream.range(0, bdsIndex).mapToObj(list::get).mapToInt(IntegerBounds::getLengthInc).sum() + varOper(list.get(bdsIndex), bds -> num - bds.getLowerBound());
+//        return bdsIndex + varOper(list.get(bdsIndex), bds -> num - bds.getLowerBound());
+    }
+    public boolean contains(int num) {
+        return indexOf(num) != -1;
+    }
+
+
+
+    private boolean add(int num, boolean reconstruct) {
+        if (isEmpty()) {
+            this.firstElem = num;
+            this.lastElem = num;
+            return OptionalEx.ofCond(list.add(new IntegerBounds(num, num))).thenRun(() -> {
+                size++;
+            }).get();
+        }
+        if (num > lastElem) {
+            if (num - lastElem == 1) {
+                CollectionsEx.lastElem(list).setUpperBound(num);
+                size++;
+            } else {
+                return OptionalEx.ofCond(list.add(new IntegerBounds(num, num))).thenRun(() -> {
+                    size++;
+                    this.lastElem = num;
+                }).get();
+            }
+            this.lastElem = num;
+            return true;
+        }
+        if (num < firstElem) {
+            if (num - firstElem == -1) {
+                list.get(0).setLowerBound(num);
+            } else {
+                list.add(0, new IntegerBounds(num, num));
+            }
+            size++;
+            this.firstElem = num;
+            return true;
+        }
+
+        int[] res = CollectionsEx.closestBinarySearchBds(list, num, probableIndex(num));
+        // 1 length indicates actual result, meaning num does not have to be added
+        if (res.length == 1) {
+            return false;
+        }
+
+        int setUpper = INVALID_INT, setLower = INVALID_INT;
+        for (int loc : res) {
+            IntegerBounds bds = list.get(loc);
+            if (num - bds.getUpperBound() == 1) {
+                bds.setUpperBound(num);
+                setUpper = loc;
+                if (!invalid(setLower)) break;
+            }
+            if (num - bds.getLowerBound() == -1) {
+                bds.setLowerBound(num);
+                setLower = loc;
+                if (!invalid(setUpper)) break;
+            }
+        }
+
+        if (!invalid(setUpper) && !invalid(setLower)) {
+            int newLow = list.get(setUpper).getLowerBound();
+            int newUpper = list.get(setLower).getUpperBound();
+            list.remove(setUpper);
+            list.remove(setLower - 1);
+            list.add(setUpper, new IntegerBounds(newLow, newUpper));
+        }
+        else if (invalid(setUpper) && invalid(setLower)) {
+            list.add(res[1], new IntegerBounds(num, num));
+        }
+        size++;
+        return true;
+
+
+    }
+    public boolean add(int num) {
+        return add(num, true);
+    }
+
+    public boolean addAll(int... nums) {
+        return Arrays.stream(nums).allMatch(n -> add(n, false));
+    }
+    public boolean addAll(Collection<? extends Integer> nums) {
+        return nums.stream().allMatch(n -> add(n, false));
+    }
+
+    @Override
+    public boolean addAll(int index, Collection<? extends Integer> c) {
+        throw new UnsupportedOperationException("Cannot add int at any index");
+    }
+
+    @Override
+    public boolean removeAll(Collection<?> c) {
+        return c.stream().allMatch(cN -> remove(cN, false));
+    }
+
+    @Override
+    public boolean retainAll(Collection<?> c) {
+        return c.stream().filter(Predicate.not(c::contains)).allMatch(n -> remove(n, false));
+    }
+
+    public boolean addAll(IntList nums) {
+        return nums.stream().allMatch(n -> add(n, false));
+    }
+
+
+    public Integer remove(int idx) {
+        if (idx >= size()) throw new ArrayIndexOutOfBoundsException("Index " + idx + " out of bounds for length " + size());
+        return SwitchIf.ofDefault(
+                () -> removeElem(get(idx)),
+                ConditionalCase.of(idx == 0, () -> removeElem(firstElem)),
+                ConditionalCase.of(idx == size() - 1, () -> removeElem(lastElem))
+        ).evaluate() ? -1 : null;
+    }
+
+
+    @Override
+    public int indexOf(Object o) {
+        if (!(o instanceof Integer oI)) return -1;
+        return indexOf(oI.intValue());
+    }
+    @Override
+    public int lastIndexOf(Object o) {
+        return indexOf(o);
+    }
+
+    @Override
+    public ListIterator<Integer> listIterator() {
+        return listIterator(0);
+    }
+
+    @Override
+    public ListIterator<Integer> listIterator(int startIndex) {
+        outOfBounds(startIndex);
+        return new ListIterator<>() {
+            private int cursor = startIndex;
+            private int lastRet = -1;
+
+            @Override
+            public boolean hasNext() { return cursor < size; }
+            @Override
+            public Integer next() {
+                if (!hasNext()) throw new NoSuchElementException();
+                Integer value = get(cursor);
+                lastRet = cursor++;
+                return value;
+            }
+
+            @Override
+            public boolean hasPrevious() { return cursor > 0; }
+            @Override
+            public Integer previous() {
+                if (!hasPrevious()) throw new NoSuchElementException();
+                Integer value = get(--cursor);
+                lastRet = cursor;
+                return value;
+            }
+
+            @Override
+            public int nextIndex() { return cursor; }
+            @Override
+            public int previousIndex() { return cursor - 1; }
+
+            @Override
+            public void remove() {
+                if (lastRet < 0) throw new IllegalStateException();
+                IntList.this.removeElem(get(lastRet));
+                if (lastRet < cursor) cursor--;
+                lastRet = -1;
+            }
+
+            @Override
+            public void set(Integer e) {
+                if (lastRet < 0) throw new IllegalStateException();
+                throw new UnsupportedOperationException("set not supported");
+            }
+
+            @Override
+            public void add(Integer e) {
+                throw new UnsupportedOperationException("add not supported");
+            }
+        };
+    }
+
+    @Override
+    public List<Integer> subList(int fromIndex, int toIndex) {
+        outOfBounds(fromIndex);
+        outOfBounds(toIndex);
+        return stream().skip(fromIndex).limit(toIndex - fromIndex).toList();
+    }
+
+    private boolean removeElem(int num, boolean reconstruct) {
+
+        if (num == this.firstElem) {
+            IntegerBounds firstBds = list.get(0);
+            if (firstBds.getLength() == 0) {
+                list.remove(0);
+                if (!list.isEmpty()) this.firstElem = list.get(0).getLowerBound();
+            } else {
+                this.firstElem = firstBds.incLowerBound();
+            }
+            size--;
+            return true;
+        }
+        else if (num == this.lastElem) {
+            IntegerBounds lastBds = list.get(list.size() - 1);
+            int oldLen = CollectionsEx.lastElem(list).getLength();
+            if (lastBds.getLength() == 0) {
+                list.remove(list.size() - 1);
+                if (!list.isEmpty()) {
+                    this.lastElem = list.get(list.size() - 1).getUpperBound();
+                }
+            } else {
+                this.lastElem = lastBds.decUpperBound();
+            }
+            size--;
+            return true;
+        }
+
+        int numIndex = bdsIndexOf(num);
+        if (numIndex == -1) return false;
+
+        IntegerBounds bds = list.get(numIndex);
+        if (bds.getLength() == 0) {
+            list.remove(numIndex);
+            size--;
+            return true;
+        }
+        // dont remove it as soon as we get it just in case the function fails
+        if (bds.getLowerBound() == num) {
+            list.set(numIndex, new IntegerBounds(num + 1, bds.getUpperBound()));
+            size--;
+            return true;
+        }
+        if (bds.getUpperBound() == num) {
+            list.set(numIndex, new IntegerBounds(bds.getLowerBound(), num - 1));
+            size--;
+            return true;
+        }
+        int lower = bds.getLowerBound();
+        int upper = bds.getUpperBound();
+
+        list.remove(numIndex);
+        list.add(numIndex, new IntegerBounds(num + 1, upper));
+        list.add(numIndex, new IntegerBounds(lower, num - 1));
+        size--;
+        return true;
+
+    }
+    public boolean removeElem(int num) {
+        return removeElem(num, true);
+    }
+
+    public void clear() {
+        this.list.clear();
+        this.size = 0;
+        this.firstElem = 0;
+        this.lastElem = 0;
+    }
+
+    private void outOfBounds(int idx) {
+        if (idx < 0 || idx >= size) throwOutOfBounds(idx);
+    }
+    private void throwOutOfBounds(int idx) {
+        throw new ArrayIndexOutOfBoundsException("Index " + idx + " is out of bounds for length " + size);
+    }
+/*
+    public void reassembleIdx() {
+        boolean clr = listIdx.size() != list.size();
+        if (clr) listIdx.clear();
+        globalIdxCipher = 0;
+        idxCiphers.clear();
+        ignoreList.clear();
+
+        AtomicInteger idxOffset = new AtomicInteger(0);
+        for (int index = 0; index < list.size(); index++) {
+            varExec(index,
+            fIndex -> OptionalEx.ofCond(new IntegerBounds(idxOffset.get(), idxOffset.addAndGet(list.get(fIndex).getLength() + 1) - 1), clr)
+                    .then(bds ->  listIdx.add(fIndex, bds))
+                    .orElse((Consumer<IntegerBounds>) bds -> listIdx.set(fIndex, bds)));
+        }
+    }*/
+
+    public int[] closest(int num) {
+        return CollectionsEx.closestBinarySearchBds(list, num, probableIndex(num));
+    }
+
+    public int first() {
+        return this.firstElem;
+    }
+    public int last() {
+        return this.lastElem;
+    }
+
+    public int size() {
+        return this.size;
+    }
+    public boolean isEmpty() {
+        return this.size() <= 0 || list.isEmpty();
+    }
+
+
+    @Override
+    public boolean contains(Object o) {
+        if (!(o instanceof Integer oI)) return false;
+        return contains(oI.intValue());
+    }
+
+    @Override
+    public void forEach(Consumer<? super Integer> fn) {
+        list.forEach(bds -> bds.forEach(fn));
+    }
+    public void forEachRaw(Consumer<IntegerBounds> fn) {
+        if (!raw) throw new IllegalStateException("Cannot access bounds of IntList without raw access enabled");
+        list.forEach(fn);
+        offRaw();
+    }
+
+    public Stream<Integer> stream() {
+        return list.stream().flatMap(IntegerBounds::stream);
+    }
+
+    public static Collector<Integer, ?, IntList> toIntList() {
+        return Collector.of(
+                IntList::new,
+                IntList::add,
+                (left, right) -> {
+                    left.addAll(right);
+                    return left;
+                },
+                Collector.Characteristics.UNORDERED
+        );
+    }
+
+
+    public List<Integer> toList() {
+        return stream().toList();
+    }
+
+    @Override
+    public Iterator<Integer> iterator() {
+        Function<Integer, Boolean> removeParent = this::remove;
+        return new Iterator<>() {
+            private int index = 0;
+
+            @Override
+            public boolean hasNext() {
+                return index < size();
+            }
+            @Override
+            public Integer next() {
+                if (!hasNext()) throw new NoSuchElementException();
+                // TODO: make this more performant by getting entire list at once
+                // rather than calling get each time
+                return get(index++);
+            }
+            @Override
+            public void remove() {
+                removeParent.apply(index);
+            }
+        };
+    }
+
+
+    @Override
+    public Object[] toArray() {
+        Object[] arr = new Object[size()];
+        int i = 0;
+        for (Integer v : this) arr[i++] = v;
+        return arr;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> T[] toArray(T[] a) {
+        int sz = size();
+        T[] out = a.length >= sz ? a
+                : (T[]) Array.newInstance(a.getClass().getComponentType(), sz);
+        int i = 0;
+        for (Integer v : this) out[i++] = (T) v;
+        if (out.length > sz) out[sz] = null;
+        return out;
+    }
+
+    @Override
+    public boolean add(Integer integer) {
+        return add(integer.intValue());
+    }
+
+    private boolean remove(Object o, boolean reconstruct) {
+        if (!(o instanceof Integer oI)) return false;
+        return removeElem(oI, reconstruct);
+    }
+    @Override
+    public boolean remove(Object o) {
+        return remove(o, true);
+    }
+
+    @Override
+    public boolean containsAll(Collection<?> c) {
+        return c.stream().allMatch(this::contains);
+    }
+
+    @Override
+    public Spliterator<Integer> spliterator() {
+        return Spliterators.spliteratorUnknownSize(iterator(), Spliterator.ORDERED);
+    }
+
+    @Override
+    public String toString() {
+        StringJoiner elems = new StringJoiner(", ");
+        forEach(i -> elems.add(i.toString()));
+        return "[" + elems + "]";
+    }
+
+    @Override
+    public boolean equals(Object intListObj) {
+        if (!(intListObj instanceof IntList intList)) return false;
+        if (intList.size() != size()) return false;
+        for (int i = 0; i < intList.size(); i++) {
+            if (!Objects.equals(intList.get(i), get(i))) return false;
+        }
+        return true;
+    }
+
+    public void onRaw() {
+        this.raw = true;
+    }
+    public void offRaw() {
+        this.raw = false;
+    }
+
+
+
+
+    public static void main(String[] args) {
+        /*
+        // default size: 13
+        IntList l = new IntList(3, 5,6,7,8,10,11,19,21,28,29,30,37);
+
+        l.add(31);
+        l.add(20);
+        l.add(9);
+        l.add(1);
+        l.add(98);
+        l.add(55);
+        l.add(23);
+        l.add(22);
+
+        l.remove(23);*/
+
+        System.out.println("=== Testing IntList ===");
+
+        // 1. Test Construction
+        IntList l = new IntList(3, 5, 6, 7, 8, 10, 11, 19, 21, 28, 29, 30, 37);
+        System.out.println("Initial list: " + l);
+        // Expected: [3, 5, 6, 7, 8, 10, 11, 19, 21, 28, 29, 30, 37]
+
+        // 2. Test add (inserts in sorted position)
+        l.add(42);
+        l.add(1);
+        l.add(9);
+        System.out.println("After additions: " + l);
+        // Expected: [1, 3, 5, 6, 7, 8, 9, 10, 11, 19, 21, 28, 29, 30, 37, 42]
+
+        // 3. Test get
+        System.out.println("Element at index 0: " + l.get(0)); // Expected: 1
+        System.out.println("Element at index 5: " + l.get(5)); // Expected: 8
+        System.out.println("Element at last index: " + l.get(l.size() - 1)); // Expected: 42
+
+        // 4. Test remove
+        l.remove(0); // remove 1
+        l.remove(4); // originally 8, now 9
+        l.remove(l.size() - 1); // remove 42
+        System.out.println("After removals: " + l);
+        // Expected: [3, 5, 6, 7, 9, 10, 11, 19, 21, 28, 29, 30, 37]
+
+        // 5. Verify final contents
+        int[] expected = {3, 5, 6, 7, 9, 10, 11, 19, 21, 28, 29, 30, 37};
+        boolean success = true;
+        for (int i = 0; i < expected.length; i++) {
+            if (l.get(i) != expected[i]) {
+                success = false;
+                System.out.println("Mismatch at index " + i + ": expected " + expected[i] + ", got " + l.get(i));
+            }
+        }
+
+        if (success) {
+            System.out.println("All tests passed!");
+        } else {
+            System.out.println("Some tests failed.");
+        }
+
+        l.add(89);
+        l.add(100);
+        l.add(101);
+        l.add(102);
+        l.add(25);
+        l.add(26);
+        l.add(62);
+        l.add(0);
+        l.add(78);
+        l.add(80);
+
+
+//        l.add(38);
+//        l.remove()
+
+
+//        l.add(22);
+//        l.remove(22);
+
+        // total 19
+        for (Integer integer : l) {
+            System.out.println(integer);
+        }
+        System.out.println("a");
+    }
+
+
+}
+

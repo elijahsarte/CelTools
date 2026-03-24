@@ -1,0 +1,500 @@
+package com.elijahsarte.celtools.main.util.structures.collections.point;
+
+import com.elijahsarte.celtools.main.Main;
+import com.elijahsarte.celtools.main.util.*;
+import com.elijahsarte.celtools.main.util.datastructures.EnhancedTreeMap;
+import com.elijahsarte.celtools.main.util.function.fntypes.TriConsumer;
+import com.elijahsarte.celtools.main.util.math.StepFunction;
+import com.elijahsarte.celtools.main.util.structures.collections.IntList;
+import com.elijahsarte.celtools.main.util.structures.collections.lazy.LazyList;
+
+import java.awt.*;
+import java.util.*;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.*;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static com.elijahsarte.celtools.main.util.ProgrammingEx.*;
+import static com.elijahsarte.celtools.main.util.ProgrammingEx.emptyAtomicDbl;
+
+
+public class PointCollection implements Iterable<Point> {
+
+    private EnhancedTreeMap<Integer, IntList> pointMap;
+    private final AtomicInteger size = new AtomicInteger(0);
+    private Function<Double, Double> indexFn = (x) -> 0d;
+
+    private transient boolean raw = false;
+
+    public PointCollection() {
+        this.pointMap = new EnhancedTreeMap<>();
+    }
+    // avoid erasure conflicts
+    public PointCollection(Supplier<Map<Integer, IntList>> pointMap) {
+        this.pointMap = (EnhancedTreeMap<Integer, IntList>) ProgrammingEx.varOper(pointMap.get(), m -> m instanceof EnhancedTreeMap ? m : new EnhancedTreeMap<>(m));
+        this.pointMap.forEachIdx((i, iL) ->
+            this.size.accumulateAndGet(iL.size(), (p, d) -> {
+                this.indexFn = StepFunction.slopeadd(indexFn, p + d);
+                return p + d;
+            })
+        );
+    }
+    public PointCollection(Map<Integer, List<Integer>> pointMap) {
+        this(() -> pointMap.entrySet().stream().collect(Collectors.toMap(
+                Map.Entry::getKey,
+                e -> new IntList(e.getValue()),
+                (a, b) -> a,
+                EnhancedTreeMap::new
+        )));
+    }
+
+    public PointCollection(List<Point> points) {
+        this(Main.pointToMap(points));
+    }
+    public PointCollection(Point... points) {
+        this(List.of(points));
+    }
+
+    public PointCollection(PointCollection ptCollection) {
+        this.pointMap = ptCollection.pointMap;
+        this.size.set(ptCollection.size.get());
+        this.indexFn = ptCollection.indexFn;
+    }
+
+
+
+    private void removeLastFn() {
+        this.indexFn = StepFunction.sloperemove(indexFn, StepFunction.slopedstart(indexFn, size()));
+    }
+    private void reconstructIndexFn(Integer x) {
+        this.reconstructIndexFn();
+        /*
+        if (x == null || x == firstX()) {
+            this.reconstructIndexFn();
+            return;
+        }
+        if (x == MathEx.roundInt(StepFunction.slopedstart(this.indexFn, this.indexFn.apply((double) size())))) return;
+        int cutoff = pointMap.indexOf(x);
+        
+        if (cutoff <= size() / 2) {
+            this.reconstructIndexFn();
+            return;
+        }
+        Function<Double, Double> newIndexFn = this.indexFn;
+        int currStart, point = size() - 1;
+        while ((currStart = MathEx.roundInt(StepFunction.slopedstart(this.indexFn, point))) > cutoff) {
+            if (currStart == 2009260155) {
+                int u = 8;
+            }
+            newIndexFn = StepFunction.sloperemove(newIndexFn, currStart);
+            point -= getEntry(currStart).getValue().size();
+        }
+        this.indexFn = newIndexFn;*/
+    }
+    private void reconstructIndexFn() {
+        varExec(emptyAtomicDbl(), lastRes -> this.indexFn = StepFunction.sloped(pointMap.values().stream()
+                .map(IntList::size)
+                .mapToDouble(i -> (double) i)
+                .map(i -> i + lastRes.getAndAccumulate(i, Double::sum))
+                .toArray()
+        ));
+    }
+
+
+    EnhancedTreeMap.Entry<Integer, IntList> getEntry(int idx) {
+        outOfBounds(idx);
+        return pointMap.getIdx(MathEx.roundInt(indexFn.apply((double) idx)));
+    }
+
+    public Point get(int idx) {
+        outOfBounds(idx);
+        return varOper(getEntry(idx),
+                eT -> new Point(eT.getKey(), eT.getValue().get(MathEx.roundInt((idx - Math.max(StepFunction.slopedstart(indexFn, idx), 0)))))
+        );
+        /*
+        int offset = 0;
+        Point foundPt = null;
+        // For loop so that we can break the loop, for performance reasons
+        for (Map.Entry<Integer, IntList> entry : pointMap.entrySet()) {
+            int x = entry.getKey(), hereIdx = idx - offset;
+            IntList ys = entry.getValue();
+            if (hereIdx >= ys.size()) {
+                offset += ys.size();
+                continue;
+            }
+            foundPt = new Point(x, ys.get(hereIdx));
+            break;
+        }
+        if (foundPt == null) outOfBounds(idx);
+        return foundPt;*/
+    }
+
+    public List<Point> getAtX(int x) {
+        return new LazyList<>(getYesAtX(x), y -> new Point(x, y));
+    }
+    public IntList getYesAtX(int x) {
+        return pointMap.getOrDefault(x, new IntList());
+    }
+
+
+    public int indexOf(Point pt) {
+        if (!pointMap.containsKey(pt.x)) return -1;
+        return pointMap.getHeldV().indexOf(pt.y);
+    }
+    public boolean contains(Point pt) {
+        return this.indexOf(pt) != -1;
+    }
+    public boolean containsX(int x) {
+        return pointMap.containsKey(x);
+    }
+
+    private boolean add(Point pt, boolean reconstruct) {
+        IntList ys = pointMap.get(pt.x);
+        if (ys == null) {
+            pointMap.put(pt.x, new IntList(pt.y));
+            if (reconstruct) {
+                if (pt.x > lastX()) this.indexFn = StepFunction.slopeadd(indexFn, size());
+                else this.reconstructIndexFn(pt.x);
+            }
+            size.incrementAndGet();
+            return true;
+        }
+        else if (!ys.add(pt.y)) return false;
+        if (reconstruct && pt.x < lastX()) this.reconstructIndexFn(pt.x);
+        size.incrementAndGet();
+        return true;
+    }
+    public boolean add(Point pt) {
+        return add(pt, true);
+    }
+
+    private boolean remove(Point pt, boolean reconstruct) {
+        if (!pointMap.containsKey(pt.x)) return false;
+        IntList ys = pointMap.getHeldV();
+        if (ys.removeElem(pt.y)) {
+//            if (ys.isEmpty()) pointMap.deleteHeld();
+//            if (ys.isEmpty()) pointMap.deleteHeld();
+            if (reconstruct) {
+                if (ys.isEmpty() && pt.x >= lastX()) {
+                    removeLastFn();
+                    pointMap.remove(pt.x);
+                }
+                else if (pt.x < lastX()) {
+                    if (ys.isEmpty()) pointMap.remove(pt.x);
+                    this.reconstructIndexFn(lowerX(pt.x));
+                }
+            }
+            size.decrementAndGet();
+            return true;
+        }
+        return false;
+    }
+    public boolean remove(Point pt) {
+        return remove(pt, true);
+    }
+
+
+    public boolean addAtX(int x, int... yes) {
+        if (pointMap.containsKey(x)) {
+            boolean res = pointMap.getHeldV().addAll(yes);
+            if (res) {
+                size.addAndGet(yes.length);
+                if (x < lastX()) this.reconstructIndexFn(x);
+            }
+            return res;
+        } else {
+            boolean res = pointMap.put(x, new IntList(yes)) != null;
+            if (res) {
+                size.addAndGet(yes.length);
+                if (x > lastX()) this.indexFn = StepFunction.slopeadd(indexFn, size());
+                else this.reconstructIndexFn(x);
+            }
+            return res;
+        }
+    }
+    public boolean addAtX(int x, IntList yes) {
+        if (pointMap.containsKey(x)) {
+            boolean res = pointMap.getHeldV().addAll(yes);
+            if (res) {
+                size.addAndGet(yes.size());
+                if (x < lastX()) this.reconstructIndexFn(x);
+            }
+            return res;
+        } else {
+            boolean res = pointMap.put(x, new IntList(yes)) != null;
+            if (res) {
+                size.addAndGet(yes.size());
+                if (x > lastX()) this.indexFn = StepFunction.slopeadd(indexFn, size());
+                else this.reconstructIndexFn(x);
+            }
+            return res;
+        }
+    }
+    public boolean addAtX(int x, Collection<? extends Integer> yes) {
+        if (pointMap.containsKey(x)) {
+            boolean res = pointMap.getHeldV().addAll(yes);
+            if (res) {
+                size.addAndGet(yes.size());
+                if (x < lastX()) this.reconstructIndexFn(x);
+            }
+            return res;
+        } else {
+            boolean res = pointMap.put(x, new IntList(yes)) != null;
+            if (res) {
+                size.addAndGet(yes.size());
+                if (x > lastX()) this.indexFn = StepFunction.slopeadd(indexFn, size());
+                else this.reconstructIndexFn(x);
+            }
+            return res;
+        }
+    }
+
+    private boolean remove(int idx, boolean reconstruct) {
+        outOfBounds(idx);
+        EnhancedTreeMap.Entry<Integer, IntList> fE = pointMap.getAndHoldIdx(MathEx.roundInt(indexFn.apply((double) idx)));
+        int x = fE.getKey();
+        IntList ys = fE.getValue();
+        boolean res = Objects.nonNull(ys.remove(MathEx.roundInt((idx - Math.max(StepFunction.slopedstart(indexFn, idx), 0)))));
+        if (res) {
+            size.decrementAndGet();
+            if (ys.isEmpty()) {
+                if (reconstruct && x >= lastX()) removeLastFn();
+                pointMap.deleteHeld();
+            }
+            if (reconstruct && x < lastX()) this.reconstructIndexFn(lowerX(x));
+        }
+        return res;
+        /*
+        int offset = 0;
+        // For loop so that we can break the loop, for performance reasons
+        for (Map.Entry<Integer, IntList> entry : pointMap.entrySet()) {
+            int hereIdx = idx - MathEx.posBound(offset);
+            IntList ys = entry.getValue();
+            if (hereIdx >= ys.size()) {
+                offset += ys.size();
+                continue;
+            }
+            boolean res = Objects.nonNull(ys.remove(hereIdx));
+            if (res) {
+                size.decrementAndGet();
+                if (ys.isEmpty()) pointMap.remove(entry.getKey());
+            }
+            return res;
+        }
+        return false;*/
+    }
+    public boolean remove(int idx) {
+        return remove(idx, true);
+    }
+
+    public IntList removeAtX(int x) {
+        if (!pointMap.containsKey(x)) return null;
+        IntList removed = pointMap.getHeldV();
+        size.addAndGet(-removed.size());
+        if (x == lastX()) removeLastFn();
+        else this.reconstructIndexFn(x);
+        return removed;
+    }
+    void removeEntry(EnhancedTreeMap.Entry<Integer, IntList> entry) {
+        pointMap.deleteEntry(entry);
+    }
+
+
+    public void translate(int transX, int transY) {
+        this.pointMap = this.pointMap.entrySet().stream().collect(Collectors.toMap(
+                e -> e.getKey() + transX,
+                e -> StreamEx.toIntList(e.getValue().stream().map(y -> y + transY)),
+                (a, b) -> a,
+                EnhancedTreeMap::new
+        ));
+    }
+
+
+    public void forEach(Consumer<? super Point> fn) {
+        pointMap.forEach((x, ys) ->
+                ys.forEach(y ->
+                        fn.accept(new Point(x, y))
+                )
+        );
+    }
+    public void forEach(BiConsumer<Integer, Integer> fn) {
+        pointMap.forEach((x, ys) ->
+                ys.forEach(y ->
+                        fn.accept(x, y)
+                )
+        );
+    }
+    public void forEachInc(BiConsumer<Point, Integer> fn) {
+        AtomicInteger index = new AtomicInteger(0);
+        forEach(pt -> fn.accept(pt, index.getAndIncrement()));
+    }
+    public void forEachInc(TriConsumer<Integer, Integer, Integer> fn) {
+        AtomicInteger index = new AtomicInteger(0);
+        forEach((x, y) -> fn.accept(x, y, index.getAndIncrement()));
+    }
+    public void forEachRaw(BiConsumer<Integer, IntList> fn) {
+        if (!raw) throw new IllegalCallerException("Cannot access pointMap when raw access is not enabled");
+        pointMap.forEach(fn);
+        offRaw();
+    }
+
+    public Set<Integer> xes() {
+        return pointMap.keySet();
+    }
+    public IntList yes() {
+        return pointMap.values().stream().flatMap(IntList::stream).collect(IntList.toIntList());
+    }
+
+
+    public boolean isEmpty() {
+        return pointMap.isEmpty();
+    }
+
+    public int size() {
+        return this.size.get();
+    }
+
+
+    public int firstX() {
+        return pointMap.firstKey();
+    }
+    public int lastX() {
+        return pointMap.lastKey();
+    }
+    public Integer lowerX(int x) {
+        return pointMap.lowerKey(x);
+    }
+    public Integer higherX(int x) {
+        return pointMap.higherKey(x);
+    }
+
+
+
+    public boolean containsAll(Collection<? extends Point> c) {
+        for (Point pt : c) {
+            if (!this.contains(pt)) return false;
+        }
+        return true;
+    }
+
+    public boolean addAll(Collection<? extends Point> c) {
+        for (Point pt : c) {
+            if (!this.add(pt, false)) {
+                this.reconstructIndexFn();
+                return false;
+            }
+        }
+        this.reconstructIndexFn();
+        return true;
+    }
+    public boolean addAll(PointCollection c) {
+        c.onRaw();
+        return c.entrySet().stream().allMatch(e -> this.addAtX(e.getKey(), e.getValue()));
+    }
+    public void addAll(Point... pts) {
+        Arrays.stream(pts).forEach(p -> this.add(p, false));
+        this.reconstructIndexFn();
+    }
+
+
+    public boolean removeAll(Collection<? extends Point> c) {
+        for (Point pt : c) {
+            if (!this.remove(pt, false)) {
+                this.reconstructIndexFn();
+                return false;
+            }
+        }
+        this.reconstructIndexFn();
+        return true;
+    }
+    public void removeAll(Point... pts) {
+        Arrays.stream(pts).forEach(p -> this.remove(p, false));
+        this.reconstructIndexFn();
+    }
+
+    public boolean removeIf(Predicate<? super Point> filter) {
+        return stream().filter(filter).anyMatch(this::remove);
+    }
+
+    public boolean retainAll(Collection<?> c) {
+        return retainAll(new HashSet<>(c));
+    }
+    public boolean retainAll(Set<?> c) {
+        Iterator<Point> it = iterator();
+        while (it.hasNext()) {
+            if (c.contains(it.next())) it.remove();
+        }
+        return false;
+    }
+
+    public void clear() {
+        this.pointMap.clear();
+    }
+
+
+    // Implement all methods from Collections
+    public Spliterator<Point> spliterator() {
+        return Spliterators.spliteratorUnknownSize(iterator(), Spliterator.ORDERED);
+    }
+
+    public Stream<Point> stream() {
+        return this.pointMap.entrySet().stream().flatMap(e -> e.getValue().stream().map(y -> new Point(e.getKey(), y)));
+    }
+    public Stream<Point> parallelStream() {
+        return this.pointMap.entrySet().parallelStream().flatMap(e -> e.getValue().stream().parallel().map(y -> new Point(e.getKey(), y)));
+    }
+
+    public PointIterator iterator() {
+        return new PointIterator(this);
+    }
+
+    public List<Point> toList() {
+        return ProgrammingEx.varMutate(new ArrayList<>(size()), pts -> forEach(pt -> pts.add(pt)));
+    }
+    public Point[] toArray() {
+        return ProgrammingEx.varMutate(new Point[size()], pts -> forEachInc((pt, i) -> pts[i] = pt));
+    }
+
+    public Set<Map.Entry<Integer, IntList>> entrySet() {
+//        if (!raw) throw new IllegalCallerException("Cannot call entrySet when raw access is not enabled");
+        return pointMap.entrySet();
+    }
+
+    public PointCollection flip() {
+        return varMutate(new PointCollection(), c -> forEach(p -> c.addAtX(p.y, p.x)));
+    }
+
+    private void outOfBounds(int idx) {
+        if (idx < 0 || idx >= size()) throw new ArrayIndexOutOfBoundsException("Index " + idx + " is out of bounds for length " + size());
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (!(o instanceof PointCollection oPC)) return false;
+        if (oPC.size() != size()) return false;
+        if (!ProgrammingEx.varOper(oPC.xes(), otherXes -> xes().stream().anyMatch(otherXes::contains))) return false;
+        return this.parallelStream().noneMatch(Predicate.not(oPC::contains));
+    }
+
+    // Probably rewrite later
+    @Override
+    public int hashCode() {
+        return MathEx.roundInt(ProgrammingEx.varOper(xes(), xes -> (this.size() + CollectionsEx.average(xes())) * (Math.exp(MathEx.divide(xes.stream().map(i -> ProgrammingEx.varOper(pointMap.get(i), iL -> iL.get(0) + iL.size())).mapToInt(i -> i).sum(), (this.size() % 2 == 0 ? 0.9 : -1))))));
+    }
+
+
+    public void onRaw() {
+        this.raw = true;
+    }
+    public void offRaw() {
+        this.raw = false;
+    }
+    public void rawCheck() {
+        if (!raw) throw new IllegalCallerException("Cannot call raw methods when raw access is not enabled");
+        offRaw();
+    }
+
+}
+
