@@ -338,11 +338,55 @@ public final class CollectionsEx {
         return list;
 //        return varMutate(new ArrayList<>(), (list) -> new ForEach(arr).execute((v, f) -> list.add((float) v)));
     }
-
     public static List<Byte> toBoxedList(byte[] arr) {
         List<Byte> list = new ArrayList<>();
         for (byte v : arr) list.add(v);
         return list;
+    }
+    public static Integer[] toBoxedArr(int[] arr) {
+        Integer[] out = new Integer[arr.length];
+        for (int i = 0; i < arr.length; i++) {
+            out[i] = arr[i];
+        }
+        return out;
+    }
+
+    public static Double[] toBoxedArr(double[] arr) {
+        Double[] out = new Double[arr.length];
+        for (int i = 0; i < arr.length; i++) {
+            out[i] = arr[i];
+        }
+        return out;
+    }
+    public static Long[] toBoxedArr(long[] arr) {
+        Long[] out = new Long[arr.length];
+        for (int i = 0; i < arr.length; i++) {
+            out[i] = arr[i];
+        }
+        return out;
+    }
+    public static Boolean[] toBoxedArr(boolean[] arr) {
+        Boolean[] out = new Boolean[arr.length];
+        for (int i = 0; i < arr.length; i++) {
+            out[i] = arr[i];
+        }
+        return out;
+    }
+
+    public static Float[] toBoxedArr(float[] arr) {
+        Float[] out = new Float[arr.length];
+        for (int i = 0; i < arr.length; i++) {
+            out[i] = arr[i];
+        }
+        return out;
+    }
+
+    public static Byte[] toBoxedArr(byte[] arr) {
+        Byte[] out = new Byte[arr.length];
+        for (int i = 0; i < arr.length; i++) {
+            out[i] = arr[i];
+        }
+        return out;
     }
 
     public static int[] toPrimitiveInt(Collection<? extends Number> arr) {

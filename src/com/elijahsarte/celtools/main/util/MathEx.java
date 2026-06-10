@@ -336,6 +336,12 @@ public final class MathEx {
     public static boolean within(double x, double cmp, double percent) {
         return x > (cmp - (cmp * (percent - 1))) && x <= (cmp + (cmp * (percent - 1)));
     }
+    public static boolean withinPos(double x, double cmp, double percent) {
+        return ((x - cmp) / cmp) * 100.0 >= 0 && ((x - cmp) / cmp) * 100.0 <= percent;
+    }
+    public static boolean withinNeg(double x, double cmp, double percent) {
+        return ((x - cmp) / cmp) * 100.0 <= 0 && ((x - cmp) / cmp) * 100.0 >= -percent;
+    }
 
     public static long encode(int x, int y) {
         return (((long) x) << 32) | (y & 0xffffffffL);

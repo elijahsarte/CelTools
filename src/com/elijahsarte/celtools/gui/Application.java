@@ -29,7 +29,7 @@ import static com.elijahsarte.celtools.main.util.ProgrammingEx.noExcept;
 
 public final class Application extends JFrame {
 
-    private final List<ProgramPage> pages = List.of(new CLPP(), new CPC(), new CPMF(), new CAF());
+    private final List<ProgramPage> pages = List.of(new CLPP(), new CPC(), new CPF(), new CPMF());
 
     private final Border border = BorderFactory.createEmptyBorder(20, 20, 20, 20);
     private final CardLayout cardLayout;

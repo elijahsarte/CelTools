@@ -93,7 +93,7 @@ public class CelPaintMergeFill extends Main {
             FastRGB thisCel = new FastRGB(thisCelHandler);
 
             track("locating object border");
-            PointCollection thisObjectPoints = groupPoints(filterPixelsToPtCollection(thisCelHandler, (hsv) -> (hsv[2] <= 11 && hsv[1] <= 11) || (hsv[1] > 11 && hsv[2] <= 25)), 3).stream().min(Comparator.comparingDouble(objectPoints::distance)).orElseThrow(() -> new IllegalArgumentException("No object border found in given cel"));
+            PointCollection thisObjectPoints = getBlackGroups(thisCelHandler).stream().min(Comparator.comparingDouble(objectPoints::distance)).orElseThrow(() -> new IllegalArgumentException("No object border found in given cel"));
             ShapeContour thisObjectContour = new ShapeContour(thisObjectPoints);
             PointCollection objectPointsNotInBase = thisObjectPoints.subtract(objectPoints);
 

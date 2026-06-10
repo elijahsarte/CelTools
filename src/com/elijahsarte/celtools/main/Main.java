@@ -25,8 +25,14 @@ import com.elijahsarte.celtools.main.util.structures.collections.point.PointColl
 import com.elijahsarte.celtools.main.util.structures.shape.ShapeInfo;
 import com.elijahsarte.celtools.mainex.DebuggerEx;
 import com.elijahsarte.celtools.mainex.TaskTracker;
+import org.w3c.dom.Node;
 
-import javax.imageio.ImageIO;
+import javax.imageio.*;
+import javax.imageio.metadata.IIOMetadata;
+import javax.imageio.metadata.IIOMetadataNode;
+import javax.imageio.stream.ImageOutputStream;
+import javax.swing.*;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.File;
@@ -67,6 +73,7 @@ public abstract class Main {
     // todo: probably make some of these dynamic based off res
     // todo: make minvecdist based off image res, shape size, shape irregularity and object border irregularity, and distribution of shape pixels over a gradient (likely both horizontal and vertical) and vec distribution as well
     protected static final double minVecDist = 0.75;
+    protected static final Predicate<double[]> blackQual = (hsv) -> (hsv[2] <= 11 && hsv[1] <= 11) || (hsv[1] > 11 && hsv[2] <= 25);
 
     protected final Map<String, String> args;
     public Main(Map<String, String> args) {
@@ -121,6 +128,28 @@ public abstract class Main {
     }
     protected String safeArg(String key) {
         return safeArg(key, key + ":");
+    }
+
+    public static String readCustomMetadata(File file, String key) throws IOException {
+        ImageReader reader = ImageIO.getImageReadersByFormatName("png").next();
+        try (var iis = ImageIO.createImageInputStream(file)) {
+            reader.setInput(iis, true);
+            IIOMetadata metadata = reader.getImageMetadata(0);
+            IIOMetadataNode root = (IIOMetadataNode) metadata.getAsTree("javax_imageio_png_1.0");
+
+            var textNodes = root.getElementsByTagName("tEXtEntry");
+            for (int i = 0; i < textNodes.getLength(); i++) {
+                Node node = textNodes.item(i);
+                String keyword = node.getAttributes().getNamedItem("keyword").getNodeValue();
+                String value = node.getAttributes().getNamedItem("value").getNodeValue();
+                if (key.equalsIgnoreCase(keyword)) {
+                    return value;
+                }
+            }
+        } finally {
+            reader.dispose();
+        }
+        return null;
     }
 
     public static ImageHandler handlerFromFile(File file) {
@@ -262,6 +291,106 @@ public abstract class Main {
         ImageIO.write(pixelsHandler.getImage(), "png", outputCelFile);
 //        System.exit(0);
     }
+
+    protected static void outputCel(FastRGB pixelsHandler, String outputCelPath, Map<String, String> textTags) throws IOException {
+        track("outputting final result to " + outputCelPath + " with custom PNG tags");
+
+        File outputCelFile = new File(outputCelPath);
+        outputCelFile.createNewFile();
+
+        BufferedImage image = pixelsHandler.getImage();
+
+        ImageWriter writer = ImageIO.getImageWritersByFormatName("png").next();
+        ImageWriteParam writeParam = writer.getDefaultWriteParam();
+        ImageTypeSpecifier typeSpecifier = ImageTypeSpecifier.createFromBufferedImageType(BufferedImage.TYPE_INT_ARGB);
+        IIOMetadata metadata = writer.getDefaultImageMetadata(typeSpecifier, writeParam);
+
+        if (textTags != null && !textTags.isEmpty()) {
+            String nativeFormat = "javax_imageio_png_1.0";
+            Node root = metadata.getAsTree(nativeFormat);
+
+            org.w3c.dom.Node textNode = null;
+            for (int i = 0; i < root.getChildNodes().getLength(); i++) {
+                Node child = root.getChildNodes().item(i);
+                if ("tEXt".equals(child.getNodeName())) {
+                    textNode = child;
+                    break;
+                }
+            }
+
+            if (textNode == null) {
+                textNode = root.getOwnerDocument() != null
+                        ? root.getOwnerDocument().createElement("tEXt")
+                        : new javax.imageio.metadata.IIOMetadataNode("tEXt");
+                root.appendChild(textNode);
+            }
+
+            for (Map.Entry<String, String> entry : textTags.entrySet()) {
+                javax.imageio.metadata.IIOMetadataNode textEntry =
+                        new javax.imageio.metadata.IIOMetadataNode("tEXtEntry");
+                textEntry.setAttribute("keyword", entry.getKey());
+                textEntry.setAttribute("value", entry.getValue());
+                textNode.appendChild(textEntry);
+            }
+
+            metadata.setFromTree(nativeFormat, root);
+        }
+
+        try (ImageOutputStream output = ImageIO.createImageOutputStream(outputCelFile)) {
+            writer.setOutput(output);
+            writer.write(null, new IIOImage(image, null, metadata), writeParam);
+        } finally {
+            writer.dispose();
+        }
+//    System.exit(0);
+    }
+
+    protected static void outputCel(FastRGB pixelsHandler) throws IOException {
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setDialogTitle("Save PNG");
+        fileChooser.setFileFilter(new FileNameExtensionFilter("PNG Images", "png"));
+
+        if (fileChooser.showSaveDialog(null) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        File outputCelFile = fileChooser.getSelectedFile();
+
+        if (!outputCelFile.getName().toLowerCase().endsWith(".png")) {
+            outputCelFile = new File(outputCelFile.getAbsolutePath() + ".png");
+        }
+
+        outputCel(pixelsHandler, outputCelFile.getAbsolutePath());
+    }
+
+    protected static void outputCel(FastRGB pixelsHandler, Map<String, String> textTags, String ext) throws IOException {
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setDialogTitle("Save " + ext.toUpperCase());
+        fileChooser.setFileFilter(new FileNameExtensionFilter(ext.toUpperCase() + " Images", ext));
+
+        if (fileChooser.showSaveDialog(null) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        File outputCelFile = fileChooser.getSelectedFile();
+
+        if (!outputCelFile.getName().toLowerCase().endsWith("." + ext)) {
+            outputCelFile = new File(outputCelFile.getAbsolutePath() + "." + ext);
+        }
+
+        outputCel(pixelsHandler, outputCelFile.getAbsolutePath(), textTags);
+    }
+
+    protected static void outputCel(ImageHandler pixelsHandler, String ext) throws IOException {
+        outputCel(new FastRGB(pixelsHandler), Map.of(), ext);
+    }
+    protected static void outputCel(ImageHandler pixelsHandler, String ext, Map<String, String> textTags) throws IOException {
+        outputCel(new FastRGB(pixelsHandler), textTags, ext);
+    }
+    protected static void outputCel(ImageHandler pixelsHandler) throws IOException {
+        outputCel(pixelsHandler, "png");
+    }
+
 
     protected static void outputDump(String dump, String outputCelPath) throws IOException {
         track("outputting final dump to " + outputCelPath);
@@ -645,6 +774,226 @@ public abstract class Main {
         return groups;
     }
 
+    public static PointCollection filterPixelsToLocalGroup(
+            FastRGB image,
+            Point seed,
+            double dist,
+            Predicate<double[]> hsvQualifier
+    ) {
+        Objects.requireNonNull(image, "image");
+        Objects.requireNonNull(seed, "seed");
+        Objects.requireNonNull(hsvQualifier, "hsvQualifier");
+
+        PointCollection group = new PointCollection();
+
+        int width = image.getWidth();
+        int height = image.getHeight();
+
+        if (Double.isNaN(dist) || dist < 0.0) {
+            return group;
+        }
+
+        int sx = seed.x;
+        int sy = seed.y;
+
+        if (sx < 0 || sx >= width || sy < 0 || sy >= height) {
+            return group;
+        }
+
+        if (!hsvQualifier.test(image.getHSV(sx, sy))) {
+            return group;
+        }
+
+        double distSq = dist * dist;
+        int radius = MathEx.ceilInt(dist);
+
+        int maxOffsetCount = ((radius * 2) + 1) * ((radius * 2) + 1) - 1;
+        int[] offsetXs = new int[maxOffsetCount];
+        int[] offsetYs = new int[maxOffsetCount];
+        int offsetCount = 0;
+
+        for (int dy = -radius; dy <= radius; dy++) {
+            int dySq = dy * dy;
+            for (int dx = -radius; dx <= radius; dx++) {
+                if (dx == 0 && dy == 0) continue;
+                if ((double) (dx * dx + dySq) <= distSq) {
+                    offsetXs[offsetCount] = dx;
+                    offsetYs[offsetCount] = dy;
+                    offsetCount++;
+                }
+            }
+        }
+
+        int pixelCount = width * height;
+
+        byte[] state = new byte[pixelCount];
+        int[] queue = new int[pixelCount];
+        int head = 0;
+        int tail = 0;
+
+        IntList[] pendingByX = new IntList[width];
+
+        int seedIdx = sy * width + sx;
+        state[seedIdx] = 2;
+        queue[tail++] = seedIdx;
+
+        if (pendingByX[sx] == null) {
+            pendingByX[sx] = new IntList();
+        }
+        pendingByX[sx].add(sy);
+
+        while (head < tail) {
+            int idx = queue[head++];
+            int x = idx % width;
+            int y = idx / width;
+
+            for (int i = 0; i < offsetCount; i++) {
+                int nx = x + offsetXs[i];
+                int ny = y + offsetYs[i];
+
+                if ((nx | ny) < 0 || nx >= width || ny >= height) continue;
+
+                int nIdx = ny * width + nx;
+                if (state[nIdx] != 0) continue;
+
+                if (hsvQualifier.test(image.getHSV(nx, ny))) {
+                    state[nIdx] = 2;
+                    queue[tail++] = nIdx;
+
+                    IntList column = pendingByX[nx];
+                    if (column == null) {
+                        column = new IntList();
+                        pendingByX[nx] = column;
+                    }
+                    column.add(ny);
+                } else {
+                    state[nIdx] = 1;
+                }
+            }
+        }
+
+        for (int x = 0; x < pendingByX.length; x++) {
+            IntList ys = pendingByX[x];
+            if (ys != null && !ys.isEmpty()) {
+                group.addAtX(x, ys);
+            }
+        }
+
+        return group;
+    }
+
+    public static PointCollection filterPixelsToLocalGroup(
+            FastRGB image,
+            Point seed,
+            double dist,
+            HSVBounds hsvBounds
+    ) {
+        Objects.requireNonNull(hsvBounds, "hsvBounds");
+        return filterPixelsToLocalGroup(image, seed, dist, hsvBounds::within);
+    }
+
+    public static PointCollection filterPixelsToLocalGroup(
+            FastRGB image,
+            Point seed,
+            double dist,
+            double[] low,
+            double[] high
+    ) {
+        return filterPixelsToLocalGroup(image, seed, dist, new HSVBounds(low, high));
+    }
+
+    public static PointCollection filterPixelsToLocalGroup(
+            int[] pixels,
+            int width,
+            int height,
+            Point seed,
+            double dist,
+            Predicate<double[]> hsvQualifier
+    ) {
+        return filterPixelsToLocalGroup(new FastRGB(pixels, width, height, true), seed, dist, hsvQualifier);
+    }
+
+    public static PointCollection filterPixelsToLocalGroup(
+            int[] pixels,
+            int width,
+            int height,
+            Point seed,
+            double dist,
+            HSVBounds hsvBounds
+    ) {
+        Objects.requireNonNull(hsvBounds, "hsvBounds");
+        return filterPixelsToLocalGroup(new FastRGB(pixels, width, height, true), seed, dist, hsvBounds::within);
+    }
+
+    public static PointCollection filterPixelsToLocalGroup(
+            int[] pixels,
+            int width,
+            int height,
+            Point seed,
+            double dist,
+            double[] low,
+            double[] high
+    ) {
+        return filterPixelsToLocalGroup(pixels, width, height, seed, dist, new HSVBounds(low, high));
+    }
+
+    public static PointCollection filterPixelsToLocalGroup(
+            ImageHandler image,
+            Point seed,
+            double dist,
+            Predicate<double[]> hsvQualifier
+    ) {
+        return filterPixelsToLocalGroup(new FastRGB(image), seed, dist, hsvQualifier);
+    }
+
+    public static PointCollection filterPixelsToLocalGroup(
+            ImageHandler image,
+            Point seed,
+            double dist,
+            HSVBounds hsvBounds
+    ) {
+        Objects.requireNonNull(hsvBounds, "hsvBounds");
+        return filterPixelsToLocalGroup(new FastRGB(image), seed, dist, hsvBounds::within);
+    }
+
+    public static PointCollection filterPixelsToLocalGroup(
+            ImageHandler image,
+            Point seed,
+            double dist,
+            double[] low,
+            double[] high
+    ) {
+        return filterPixelsToLocalGroup(image, seed, dist, new HSVBounds(low, high));
+    }
+
+    public static PointCollection filterPixelsToLocalGroup(
+            BufferedImage image,
+            Point seed,
+            double dist,
+            Predicate<double[]> hsvQualifier
+    ) {
+        return filterPixelsToLocalGroup(new FastRGB(new ImageHandler(image)), seed, dist, hsvQualifier);
+    }
+
+    public static PointCollection filterPixelsToLocalGroup(
+            BufferedImage image,
+            Point seed,
+            double dist,
+            HSVBounds hsvBounds
+    ) {
+        Objects.requireNonNull(hsvBounds, "hsvBounds");
+        return filterPixelsToLocalGroup(new FastRGB(new ImageHandler(image)), seed, dist, hsvBounds::within);
+    }
+
+    public static PointCollection filterPixelsToLocalGroup(
+            BufferedImage image,
+            Point seed,
+            double dist,
+            double[] low,
+            double[] high
+    ) {
+        return filterPixelsToLocalGroup(image, seed, dist, new HSVBounds(low, high));
+    }
 
     public static void pixelsToType(int[] pixels, BiConsumer<Integer, Integer> addFn, int width, int height, int targetColor) {
         new PixelIterator(pixels, width, height, true).execute((hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop) -> {
@@ -1200,6 +1549,13 @@ public abstract class Main {
         });
 
         return result.getPixels();
+    }
+
+
+
+
+    protected static List<PointCollection> getBlackGroups(ImageHandler cel) {
+        return groupPoints(filterPixelsToPtCollection(cel, blackQual), 3);
     }
 
 

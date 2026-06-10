@@ -115,6 +115,52 @@ public class EnhancedTreeMap<K, V> extends AbstractMap<K, V> implements Navigabl
         this.heldEntry = null;
     }
 
+    @SuppressWarnings("unchecked")
+    public final V[] getOneFellSwoop(Object... keys) {
+        Entry<K, V>[] entries = getEntriesOneFellSwoop(keys);
+        V[] out = (V[]) new Object[entries.length];
+        for (int i = 0; i < entries.length; i++) {
+            out[i] = entries[i] == null ? null : entries[i].value;
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    public final List<V> getOneFellSwoopOrDefault(V defaultValue, Object... keys) {
+        // 1. Fetch the underlying entries array directly
+        Map.Entry<?, V>[] entries = getEntriesOneFellSwoop(keys);
+
+        if (entries.length == 0) {
+            return new ArrayList<>(0);
+        }
+
+        // 2. Pre-size the ArrayList to completely avoid internal array-copy resizing
+        List<V> result = new ArrayList<>(entries.length);
+
+        // 3. Use a raw for-each loop to eliminate Stream and Optional allocations
+        for (Map.Entry<?, V> entry : entries) {
+            result.add(entry != null ? entry.getValue() : defaultValue);
+        }
+
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    public final List<V> getOneFellSwoopOrDefault(V[] defaultValues, Object... keys) {
+        Entry<K, V>[] entries = getEntriesOneFellSwoop(keys);
+        List<V> out = new ArrayList<>(entries.length);
+
+        for (int i = 0; i < entries.length; i++) {
+            if (entries[i] != null) {
+                out.set(i, entries[i].value);
+            } else {
+                out.set(i, (defaultValues != null && i < defaultValues.length) ? defaultValues[i] : null);
+            }
+        }
+
+        return out;
+    }
+
     public Comparator<? super K> comparator() {
         return this.comparator;
     }
@@ -231,6 +277,250 @@ public class EnhancedTreeMap<K, V> extends AbstractMap<K, V> implements Navigabl
         }
         return null;
     }
+
+
+
+
+
+
+
+
+
+
+    @SuppressWarnings("unchecked")
+    public final Entry<K, V>[] getEntriesOneFellSwoop(Object... keys) {
+        Entry<K, V>[] out = (Entry<K, V>[]) new Entry[keys == null ? 0 : keys.length];
+        if (keys == null || keys.length == 0 || root == null) return out;
+
+        if (comparator != null) return getEntriesOneFellSwoopUsingComparator(keys);
+
+        final K fk = firstKey();
+        final K lk = lastKey();
+
+        int fallbackFrom = -1;
+        Entry<K, V> cursor = getCeilingEntryOneFellSwoop(keys[0]);
+
+        for (int i = 0; i < keys.length; i++) {
+            Object key = keys[i];
+
+            if (i > 0) {
+                Comparable<? super K> prev = (Comparable<? super K>) keys[i - 1];
+                if (prev.compareTo((K) key) > 0) {
+                    fallbackFrom = i;
+                    break;
+                }
+            }
+
+            if (key == fk) {
+                out[i] = firstEntry;
+                cursor = firstEntry;
+                continue;
+            }
+            if (key == lk) {
+                out[i] = lastEntry;
+                cursor = lastEntry;
+                continue;
+            }
+
+            Comparable<? super K> k = (Comparable<? super K>) key;
+            while (cursor != null) {
+                int cmp = k.compareTo(cursor.key);
+                if (cmp > 0) cursor = successor(cursor);
+                else {
+                    if (cmp == 0) out[i] = cursor;
+                    break;
+                }
+            }
+        }
+
+        if (fallbackFrom != -1) {
+            for (int i = fallbackFrom; i < keys.length; i++) {
+                out[i] = getEntry(keys[i]);
+            }
+        }
+
+        return out;
+    }
+
+    final Entry<K, V>[] getAndHoldEntriesOneFellSwoop(Object... keys) {
+        Entry<K, V>[] entries = getEntriesOneFellSwoop(keys);
+        this.heldEntry = entries.length == 0 ? null : entries[entries.length - 1];
+        return entries;
+    }
+
+    @SuppressWarnings("unchecked")
+    final Entry<K, V>[] getEntriesOneFellSwoopUsingComparator(Object... keys) {
+        Entry<K, V>[] out = (Entry<K, V>[]) new Entry[keys == null ? 0 : keys.length];
+        if (keys == null || keys.length == 0 || root == null) return out;
+
+        Comparator<? super K> cpr = comparator;
+        if (cpr == null) return out;
+
+        final K fk = firstKey();
+        final K lk = lastKey();
+
+        int fallbackFrom = -1;
+        Entry<K, V> cursor = getCeilingEntryOneFellSwoopUsingComparator(keys[0]);
+
+        for (int i = 0; i < keys.length; i++) {
+            K key = (K) keys[i];
+
+            if (i > 0 && cpr.compare((K) keys[i - 1], key) > 0) {
+                fallbackFrom = i;
+                break;
+            }
+
+            if (key == fk) {
+                out[i] = firstEntry;
+                cursor = firstEntry;
+                continue;
+            }
+            if (key == lk) {
+                out[i] = lastEntry;
+                cursor = lastEntry;
+                continue;
+            }
+
+            while (cursor != null) {
+                int cmp = cpr.compare(key, cursor.key);
+                if (cmp > 0) cursor = successor(cursor);
+                else {
+                    if (cmp == 0) out[i] = cursor;
+                    break;
+                }
+            }
+        }
+
+        if (fallbackFrom != -1) {
+            for (int i = fallbackFrom; i < keys.length; i++) {
+                out[i] = getEntryUsingComparator(keys[i]);
+            }
+        }
+
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    final V[] getOneFellowSwoopUsingComparator(Object... keys) {
+        Entry<K, V>[] entries = getEntriesOneFellSwoopUsingComparator(keys);
+        V[] out = (V[]) new Object[entries.length];
+        for (int i = 0; i < entries.length; i++) {
+            out[i] = entries[i] == null ? null : entries[i].value;
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    final V[] getOneFellowSwoopUsingComparatorOrDefault(V defaultValue, Object... keys) {
+        Entry<K, V>[] entries = getEntriesOneFellSwoopUsingComparator(keys);
+        V[] out = (V[]) new Object[entries.length];
+        for (int i = 0; i < entries.length; i++) {
+            out[i] = entries[i] == null ? defaultValue : entries[i].value;
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    final V[] getOneFellowSwoopUsingComparatorOrDefault(V[] defaultValues, Object... keys) {
+        Entry<K, V>[] entries = getEntriesOneFellSwoopUsingComparator(keys);
+        V[] out = (V[]) new Object[entries.length];
+
+        for (int i = 0; i < entries.length; i++) {
+            if (entries[i] != null) {
+                out[i] = entries[i].value;
+            } else {
+                out[i] = (defaultValues != null && i < defaultValues.length) ? defaultValues[i] : null;
+            }
+        }
+
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Entry<K, V> getCeilingEntryOneFellSwoop(Object key) {
+        if (root == null) return null;
+
+        if (key == firstKey()) return firstEntry;
+        if (key == lastKey()) return lastEntry;
+
+        Comparable<? super K> k = (Comparable<? super K>) key;
+        Entry<K, V> p = root;
+        Entry<K, V> candidate = null;
+
+        while (p != null) {
+            int cmp = k.compareTo(p.key);
+            if (cmp < 0) {
+                candidate = p;
+                p = p.left;
+            } else if (cmp > 0) {
+                p = p.right;
+            } else {
+                return p;
+            }
+        }
+
+        return candidate;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Entry<K, V> getCeilingEntryOneFellSwoopUsingComparator(Object key) {
+        if (root == null) return null;
+
+        K k = (K) key;
+        if (k == firstKey()) return firstEntry;
+        if (k == lastKey()) return lastEntry;
+
+        Comparator<? super K> cpr = comparator;
+        if (cpr == null) return null;
+
+        Entry<K, V> p = root;
+        Entry<K, V> candidate = null;
+
+        while (p != null) {
+            int cmp = cpr.compare(k, p.key);
+            if (cmp < 0) {
+                candidate = p;
+                p = p.left;
+            } else if (cmp > 0) {
+                p = p.right;
+            } else {
+                return p;
+            }
+        }
+
+        return candidate;
+    }
+
+    @SuppressWarnings("unchecked")
+    public final Entry<K, V>[] getEntriesOneFellSwoopOrDefaultStrict(Entry<K, V>[] defaultEntries, Object... keys) {
+        if (defaultEntries == null || defaultEntries.length != (keys == null ? 0 : keys.length)) {
+            throw new IllegalArgumentException("defaultEntries.length must match keys.length");
+        }
+        Entry<K, V>[] out = getEntriesOneFellSwoop(keys);
+        for (int i = 0; i < out.length; i++) {
+            if (out[i] == null) out[i] = defaultEntries[i];
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    final Entry<K, V>[] getEntriesOneFellSwoopUsingComparatorOrDefaultStrict(Entry<K, V>[] defaultEntries, Object... keys) {
+        if (defaultEntries == null || defaultEntries.length != (keys == null ? 0 : keys.length)) {
+            throw new IllegalArgumentException("defaultEntries.length must match keys.length");
+        }
+        Entry<K, V>[] out = getEntriesOneFellSwoopUsingComparator(keys);
+        for (int i = 0; i < out.length; i++) {
+            if (out[i] == null) out[i] = defaultEntries[i];
+        }
+        return out;
+    }
+
+
+
+
+
+
+
 
 
 

@@ -131,17 +131,26 @@ public class PointCollection implements Iterable<Point> {
     public IntList getYesAtX(int x) {
         return pointMap.getOrDefault(x, new IntList());
     }
+    public List<IntList> getYesAtXOneFellSwoop(int... xs) {
+        return pointMap.getOneFellSwoopOrDefault(new IntList(), CollectionsEx.toBoxedArr(xs));
+    }
 
 
+    // TODO: indexOf does not actually indexOf
     public int indexOf(Point pt) {
-        if (!pointMap.containsKey(pt.x)) return -1;
-        return pointMap.getHeldV().indexOf(pt.y);
+        if (!containsX(pt.x)) return -1;
+        return Optional.ofNullable(pointMap.getHeldV()).orElse(pointMap.get(pt.x)).indexOf(pt.y);
     }
     public boolean contains(Point pt) {
         return this.indexOf(pt) != -1;
     }
     public boolean containsX(int x) {
-        return pointMap.containsKey(x);
+        if (leftPoint() != null && rightPoint() != null) {
+            return ((x == leftPoint().x || x == rightPoint().x) || (x >= (leftPoint().x) && x <= (rightPoint().x) && pointMap.containsKey(x)));
+        } else {
+            recomputeTrackedPoints();
+            return pointMap.containsKey(x);
+        }
     }
 
     // Helper: recompute tracked points from scratch (call when a removal may have invalidated tracked points).
@@ -175,7 +184,7 @@ public class PointCollection implements Iterable<Point> {
             int x = e.getKey();
             IntList ys = e.getValue();
             if (ys.isEmpty()) continue;
-            int colTop = ys.last();   // highest in this column
+            int colTop = ys.first();   // highest in this column
             int colBottom = ys.first(); // lowest in this column
 
             if (topP == null || colTop > topP.y) topP = new Point(x, colTop);
@@ -321,6 +330,7 @@ public class PointCollection implements Iterable<Point> {
 
 
     public boolean addAtX(int x, int... yes) {
+        if (yes == null || yes.length == 0) return true;
         if (pointMap.containsKey(x)) {
             boolean res = pointMap.getHeldV().addAll(yes);
             if (res) size.addAndGet(yes.length);
@@ -336,6 +346,7 @@ public class PointCollection implements Iterable<Point> {
         }
     }
     public boolean addAtX(int x, IntList yes) {
+        if (yes == null || yes.isEmpty()) return true;
         if (pointMap.containsKey(x)) {
             boolean res = pointMap.getHeldV().addAll(yes);
             if (res) size.addAndGet(yes.size());
@@ -433,6 +444,213 @@ public class PointCollection implements Iterable<Point> {
         return out;
     }
 
+    public PointCollection expand(int pixels) {
+        if (pixels <= 0 || isEmpty()) return new PointCollection(this);
+
+        final int radius = pixels;
+        final int[] yReachByDx = buildDiskYReach(radius);
+
+        HashMap<Integer, ArrayList<int[]>> spansByX =
+                new HashMap<>(Math.max(16, pointMap.size() + (radius << 1) + 1));
+
+        pointMap.forEach((x, ys) -> {
+            if (ys == null || ys.isEmpty()) return;
+
+            ys.onRaw();
+            ys.forEachRaw(bounds -> {
+                int lo = bounds.getLowerBound();
+                int hi = bounds.getUpperBound();
+
+                for (int dx = -radius; dx <= radius; dx++) {
+                    int reach = yReachByDx[dx + radius];
+                    int outX = x + dx;
+
+                    spansByX
+                            .computeIfAbsent(outX, k -> new ArrayList<>())
+                            .add(new int[] { lo - reach, hi + reach });
+                }
+            });
+        });
+
+        PointCollection out = new PointCollection();
+
+        for (Map.Entry<Integer, ArrayList<int[]>> entry : spansByX.entrySet()) {
+            ArrayList<int[]> spans = entry.getValue();
+            if (spans == null || spans.isEmpty()) continue;
+
+            spans.sort(Comparator.comparingInt(a -> a[0]));
+
+            IntList mergedYs = new IntList();
+            int currLo = spans.get(0)[0];
+            int currHi = spans.get(0)[1];
+
+            for (int i = 1; i < spans.size(); i++) {
+                int lo = spans.get(i)[0];
+                int hi = spans.get(i)[1];
+
+                if (lo <= currHi + 1) {
+                    if (hi > currHi) currHi = hi;
+                } else {
+                    for (int y = currLo; y <= currHi; y++) {
+                        mergedYs.add(y);
+                    }
+                    currLo = lo;
+                    currHi = hi;
+                }
+            }
+
+            for (int y = currLo; y <= currHi; y++) {
+                mergedYs.add(y);
+            }
+
+            out.addAtX(entry.getKey(), mergedYs);
+        }
+
+        return out;
+    }
+
+    public PointCollection contract(int pixels) {
+        if (pixels <= 0 || isEmpty()) return new PointCollection(this);
+
+        final int radius = pixels;
+        final int[] yReachByDx = buildDiskYReach(radius);
+
+        HashMap<Integer, ArrayList<int[]>[]> shrinkCacheByX =
+                new HashMap<>(Math.max(16, pointMap.size()));
+
+        for (Integer x : pointMap.keySet()) {
+            @SuppressWarnings("unchecked")
+            ArrayList<int[]>[] cache = (ArrayList<int[]>[]) new ArrayList[radius + 1];
+            shrinkCacheByX.put(x, cache);
+        }
+
+        PointCollection out = new PointCollection();
+
+        final int minCandidateX = firstX() + radius;
+        final int maxCandidateX = lastX() - radius;
+
+        for (Integer xObj : pointMap.keySet()) {
+            int x = xObj;
+            if (x < minCandidateX || x > maxCandidateX) continue;
+
+            List<int[]> intersection = null;
+            boolean empty = false;
+
+            for (int dx = -radius; dx <= radius; dx++) {
+                int srcX = x + dx;
+                IntList ys = pointMap.get(srcX);
+
+                if (ys == null || ys.isEmpty()) {
+                    empty = true;
+                    break;
+                }
+
+                int reach = yReachByDx[dx + radius];
+                ArrayList<int[]> allowed =
+                        getShrunkIntervals(ys, reach, shrinkCacheByX.get(srcX));
+
+                if (allowed.isEmpty()) {
+                    empty = true;
+                    break;
+                }
+
+                if (intersection == null) {
+                    intersection = allowed;
+                } else {
+                    intersection = intersectIntervals(intersection, allowed);
+                    if (intersection.isEmpty()) {
+                        empty = true;
+                        break;
+                    }
+                }
+            }
+
+            if (empty || intersection == null || intersection.isEmpty()) continue;
+
+            IntList ysOut = new IntList();
+            for (int i = 0; i < intersection.size(); i++) {
+                int[] span = intersection.get(i);
+                for (int y = span[0]; y <= span[1]; y++) {
+                    ysOut.add(y);
+                }
+            }
+
+            if (!ysOut.isEmpty()) {
+                out.addAtX(x, ysOut);
+            }
+        }
+
+        return out;
+    }
+
+    private static ArrayList<int[]> getShrunkIntervals(
+            IntList ys,
+            int reach,
+            ArrayList<int[]>[] cache
+    ) {
+        ArrayList<int[]> cached = cache[reach];
+        if (cached != null) return cached;
+
+        ArrayList<int[]> out = new ArrayList<>();
+        if (ys == null || ys.isEmpty()) {
+            cache[reach] = out;
+            return out;
+        }
+
+        ys.onRaw();
+        ys.forEachRaw(bounds -> {
+            int lo = bounds.getLowerBound() + reach;
+            int hi = bounds.getUpperBound() - reach;
+            if (lo <= hi) {
+                out.add(new int[] { lo, hi });
+            }
+        });
+
+        cache[reach] = out;
+        return out;
+    }
+
+    private static ArrayList<int[]> intersectIntervals(List<int[]> a, List<int[]> b) {
+        ArrayList<int[]> out = new ArrayList<>(Math.min(a.size(), b.size()));
+
+        int i = 0;
+        int j = 0;
+
+        while (i < a.size() && j < b.size()) {
+            int[] sa = a.get(i);
+            int[] sb = b.get(j);
+
+            int lo = Math.max(sa[0], sb[0]);
+            int hi = Math.min(sa[1], sb[1]);
+
+            if (lo <= hi) {
+                out.add(new int[] { lo, hi });
+            }
+
+            if (sa[1] < sb[1]) {
+                i++;
+            } else {
+                j++;
+            }
+        }
+
+        return out;
+    }
+
+    private static int[] buildDiskYReach(int radius) {
+        int[] out = new int[(radius * 2) + 1];
+        long r2 = (long) radius * radius;
+
+        for (int dx = -radius; dx <= radius; dx++) {
+            long dx2 = (long) dx * dx;
+            out[dx + radius] = MathEx.floorInt(Math.sqrt(r2 - dx2));
+        }
+
+        return out;
+    }
+
+
+/*
     public void fillHoles() {
         if (isEmpty()) return;
 
@@ -511,7 +729,7 @@ public class PointCollection implements Iterable<Point> {
         };
 
         while (!q.isEmpty()) {
-            long code = q.removeFirst().longValue();
+            long code = q.removeFirst();
             int cx = (int) (code >>> 32);
             int cy = (int) code;
 
@@ -528,23 +746,243 @@ public class PointCollection implements Iterable<Point> {
                 if (solid[idx] || outside[idx]) continue;
 
                 outside[idx] = true;
-                q.addLast(Long.valueOf(MathEx.encode(nx, ny)));
+                q.addLast(MathEx.encode(nx, ny));
             }
         }
 
         for (int x = minX; x <= maxX; x++) {
             int ix = x - startX;
+
+            int count = 0;
             for (int y = minY; y <= maxY; y++) {
                 int iy = y - startY;
                 int idx = ix * height + iy;
-
                 if (!solid[idx] && !outside[idx]) {
-                    add(new Point(x, y));
+                    count++;
+                }
+            }
+
+            if (count == 0) continue;
+
+            int[] ys = new int[count];
+            int k = 0;
+            for (int y = minY; y <= maxY; y++) {
+                int iy = y - startY;
+                int idx = ix * height + iy;
+                if (!solid[idx] && !outside[idx]) {
+                    ys[k++] = y;
                     solid[idx] = true;
                 }
             }
+
+            addAtX(x, ys);
+        }
+    }*/
+public void fillHoles() {
+    if (isEmpty()) return;
+
+    int minX = firstX();
+    int maxX = lastX();
+    int minY = bottomY();
+    int maxY = topY();
+
+    int margin = 1;
+    int startX = minX - margin;
+    int endX = maxX + margin;
+    int startY = minY - margin;
+    int endY = maxY + margin;
+
+    int width = endX - startX + 1;
+    int height = endY - startY + 1;
+
+    long cellCountLong = (long) width * (long) height;
+    if (cellCountLong <= 0L || cellCountLong > Integer.MAX_VALUE) return;
+    int cellCount = (int) cellCountLong;
+
+    boolean[] solid = new boolean[cellCount];
+    boolean[] outside = new boolean[cellCount];
+
+    for (Point p : this) {
+        int ix = p.x - startX;
+        int iy = p.y - startY;
+        if (ix < 0 || ix >= width || iy < 0 || iy >= height) continue;
+        solid[ix * height + iy] = true;
+    }
+
+    int[] qx = new int[cellCount];
+    int[] qy = new int[cellCount];
+    int head = 0;
+    int tail = 0;
+
+    int maxIx = width - 1;
+    int maxIy = height - 1;
+
+    for (int ix = 0; ix < width; ix++) {
+        int base = ix * height;
+
+        int idx0 = base;
+        if (!solid[idx0] && !outside[idx0]) {
+            outside[idx0] = true;
+            qx[tail] = ix;
+            qy[tail] = 0;
+            tail++;
+        }
+
+        int idx1 = base + maxIy;
+        if (!solid[idx1] && !outside[idx1]) {
+            outside[idx1] = true;
+            qx[tail] = ix;
+            qy[tail] = maxIy;
+            tail++;
         }
     }
+
+    for (int iy = 1; iy < maxIy; iy++) {
+        int idx0 = iy;
+        if (!solid[idx0] && !outside[idx0]) {
+            outside[idx0] = true;
+            qx[tail] = 0;
+            qy[tail] = iy;
+            tail++;
+        }
+
+        int idx1 = maxIx * height + iy;
+        if (!solid[idx1] && !outside[idx1]) {
+            outside[idx1] = true;
+            qx[tail] = maxIx;
+            qy[tail] = iy;
+            tail++;
+        }
+    }
+
+    while (head < tail) {
+        int cx = qx[head];
+        int cy = qy[head];
+        head++;
+
+        int base = cx * height;
+
+        if (cx > 0) {
+            int nx = cx - 1;
+            int leftBase = base - height;
+
+            int idx = leftBase + cy;
+            if (!solid[idx] && !outside[idx]) {
+                outside[idx] = true;
+                qx[tail] = nx;
+                qy[tail] = cy;
+                tail++;
+            }
+
+            if (cy > 0) {
+                int ny = cy - 1;
+                idx = leftBase + ny;
+                if (!solid[idx] && !outside[idx]) {
+                    outside[idx] = true;
+                    qx[tail] = nx;
+                    qy[tail] = ny;
+                    tail++;
+                }
+            }
+
+            if (cy < maxIy) {
+                int ny = cy + 1;
+                idx = leftBase + ny;
+                if (!solid[idx] && !outside[idx]) {
+                    outside[idx] = true;
+                    qx[tail] = nx;
+                    qy[tail] = ny;
+                    tail++;
+                }
+            }
+        }
+
+        if (cx < maxIx) {
+            int nx = cx + 1;
+            int rightBase = base + height;
+
+            int idx = rightBase + cy;
+            if (!solid[idx] && !outside[idx]) {
+                outside[idx] = true;
+                qx[tail] = nx;
+                qy[tail] = cy;
+                tail++;
+            }
+
+            if (cy > 0) {
+                int ny = cy - 1;
+                idx = rightBase + ny;
+                if (!solid[idx] && !outside[idx]) {
+                    outside[idx] = true;
+                    qx[tail] = nx;
+                    qy[tail] = ny;
+                    tail++;
+                }
+            }
+
+            if (cy < maxIy) {
+                int ny = cy + 1;
+                idx = rightBase + ny;
+                if (!solid[idx] && !outside[idx]) {
+                    outside[idx] = true;
+                    qx[tail] = nx;
+                    qy[tail] = ny;
+                    tail++;
+                }
+            }
+        }
+
+        if (cy > 0) {
+            int ny = cy - 1;
+            int idx = base + ny;
+            if (!solid[idx] && !outside[idx]) {
+                outside[idx] = true;
+                qx[tail] = cx;
+                qy[tail] = ny;
+                tail++;
+            }
+        }
+
+        if (cy < maxIy) {
+            int ny = cy + 1;
+            int idx = base + ny;
+            if (!solid[idx] && !outside[idx]) {
+                outside[idx] = true;
+                qx[tail] = cx;
+                qy[tail] = ny;
+                tail++;
+            }
+        }
+    }
+
+    int iyMin = minY - startY;
+    int iyMax = maxY - startY;
+
+    for (int x = minX, ix = minX - startX; x <= maxX; x++, ix++) {
+        int base = ix * height;
+        int count = 0;
+
+        for (int iy = iyMin; iy <= iyMax; iy++) {
+            int idx = base + iy;
+            if (!solid[idx] && !outside[idx]) count++;
+        }
+
+        if (count == 0) continue;
+
+        int[] ys = new int[count];
+        int k = 0;
+
+        for (int iy = iyMin; iy <= iyMax; iy++) {
+            int idx = base + iy;
+            if (!solid[idx] && !outside[idx]) {
+                ys[k++] = startY + iy;
+                solid[idx] = true;
+            }
+        }
+
+        addAtX(x, ys);
+    }
+}
 
 
 
@@ -893,12 +1331,76 @@ public class PointCollection implements Iterable<Point> {
 
     public PointCollection subtract(PointCollection c) {
         PointCollection result = new PointCollection();
-        forEach(pt -> {
-            if (!c.contains(pt)) result.add(pt);
+        forEachRaw((x, ys) -> {
+            if (!c.containsX(x)) {
+                result.addAtX(x, ys);
+            } else {
+                IntList cYs = Optional.ofNullable(c.pointMap.getHeldV()).orElse(c.getYesAtX(x));
+                if (cYs != null) {
+                    ys.removeAll(cYs);
+                    if (!ys.isEmpty()) result.addAtX(x, ys);
+                }
+            }
         });
+//        forEach(pt -> {
+//            if (!c.contains(pt)) result.add(pt);
+//        });
         return result;
     }
 
+    /**
+     * Returns all points within this collection's bounding rectangle that are NOT present in the collection.
+     * This is O(area) but avoids allocations used by fillHoles() and avoids HashSet/boxing BFS queues.
+     */
+    public PointCollection inverse() {
+        PointCollection out = new PointCollection();
+        if (isEmpty()) return out;
+
+        int minX = firstX(), maxX = lastX();
+        int minY = bottomY(), maxY = topY();
+
+        // Iterate columns; membership test uses IntList.closest() binary-search path
+        // via columnContainsY(...) (no per-point HashMap/Long boxing).
+        for (int x = minX; x <= maxX; x++) {
+            IntList ys = getYesAtX(x);
+            if (ys == null || ys.isEmpty()) {
+                for (int y = minY; y <= maxY; y++) out.addAtX(x, y);
+                continue;
+            }
+            for (int y = minY; y <= maxY; y++) {
+                if (!columnContainsY(ys, y)) out.addAtX(x, y);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Fast "holes" (interior voids) without flood-fill:
+     * For each x-column, fill any gaps between the min and max y that are missing.
+     * This approximates "fillHoles().subtract(outline)" for typical solid shapes, but
+     * does not require BFS over the entire bounding box like fillHoles() [11].
+     */
+    public PointCollection hole() {
+        PointCollection out = new PointCollection();
+        if (isEmpty()) return out;
+
+        int minX = firstX(), maxX = lastX();
+
+        for (int x = minX; x <= maxX; x++) {
+            IntList ys = getYesAtX(x);
+            if (ys == null || ys.isEmpty()) continue;
+
+            int colMin = ys.first();
+            int colMax = ys.last();
+            if (colMin >= colMax) continue;
+
+            // Walk y and add missing interior points (gaps) in this column
+            for (int y = colMin; y <= colMax; y++) {
+                if (!columnContainsY(ys, y)) out.addAtX(x, y);
+            }
+        }
+        return out;
+    }
 
 
 
@@ -1074,7 +1576,7 @@ public class PointCollection implements Iterable<Point> {
         return pointMap.higherKey(x);
     }
     public int width() {
-        return lastX() - firstX();
+        return Math.abs(lastX() - firstX());
     }
 
     public int topY() {
@@ -1088,11 +1590,14 @@ public class PointCollection implements Iterable<Point> {
         return bottomPoint.get() != null ? bottomPoint.get().y : 0;
     }
     public int height() {
-        return bottomY() - topY();
+        return Math.abs(bottomY() - topY());
     }
 
     public Rectangle rect() {
         return new Rectangle(firstX(), topY(), width(), height());
+    }
+    public Rectangle imgRect() {
+        return new Rectangle(firstX(), bottomY(), width(), height());
     }
 
     // Expose tracked point accessors if callers want points:

@@ -3,17 +3,12 @@ package com.elijahsarte.celtools.main.framefactory;
 import com.elijahsarte.celtools.main.util.MathEx;
 
 import javax.imageio.ImageIO;
-import javax.imageio.ImageReadParam;
-import javax.imageio.ImageReader;
-import javax.imageio.ImageTypeSpecifier;
-import javax.imageio.stream.ImageInputStream;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.awt.image.WritableRaster;
 import java.io.File;
 import java.io.IOException;
-import java.util.Iterator;
 
 public class ImageHandler {
 
@@ -52,29 +47,26 @@ public class ImageHandler {
 
     // https://stackoverflow.com/a/27458294
     public static BufferedImage fromFile(File file, int imageType) throws IOException {
-        BufferedImage image;
-        try (ImageInputStream input = ImageIO.createImageInputStream(file)) {
-            Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
+        BufferedImage image = ImageIO.read(file);
 
-            if (!readers.hasNext()) {
-                throw new IllegalArgumentException("No reader for: " + file);
-            }
-
-            ImageReader reader = readers.next();
-            try {
-                reader.setInput(input);
-
-                ImageReadParam param = reader.getDefaultReadParam();
-                param.setDestinationType(ImageTypeSpecifier.createFromBufferedImageType(imageType));
-
-                image = reader.read(0, param);
-            }
-            finally {
-                reader.dispose();
-                input.close();
-            }
+        if (image == null) {
+            throw new IllegalArgumentException("Unable to read image: " + file);
         }
-        return image;
+
+        if (image.getType() == imageType) {
+            return image;
+        }
+
+        BufferedImage converted = new BufferedImage(
+                image.getWidth(),
+                image.getHeight(),
+                imageType);
+
+        Graphics2D g = converted.createGraphics();
+        g.drawImage(image, 0, 0, null);
+        g.dispose();
+
+        return converted;
     }
     public static BufferedImage fromFile(File file) throws IOException {
         return fromFile(file, defaultRGBType);
@@ -108,6 +100,13 @@ public class ImageHandler {
         g.drawImage(scaledImage, 0, 0, null);
         g.dispose();
         this.guiImage = scaledBI;
+    }
+
+
+    public ImageHandler copy() throws IOException {
+        ImageHandler copy = new ImageHandler(this.imageFile, this.rgbType);
+        if (this.image != null) copy.loadImage();
+        return copy;
     }
 
 

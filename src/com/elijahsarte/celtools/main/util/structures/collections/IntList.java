@@ -11,7 +11,6 @@ import com.elijahsarte.celtools.main.util.structures.bounds.IntegerBounds;
 import java.lang.reflect.Array;
 import java.util.*;
 import java.util.function.Consumer;
-import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collector;
 import java.util.stream.IntStream;
@@ -44,9 +43,8 @@ public final class IntList implements List<Integer> {
 
         int firstElem = INVALID_INT;
         int lastElem = INVALID_INT;
-
+        if (providedNums.length == 0) return;
         int[] nums = Arrays.stream(providedNums).sorted().toArray();
-        if (nums.length == 0) return;
         this.firstElem = nums[0];
 
         List<Double> sizes = new ArrayList<>(nums.length);
@@ -111,8 +109,16 @@ public final class IntList implements List<Integer> {
         throw new UnsupportedOperationException("Cannot insert number at index");
     }
 
+    private int lastSize = size, lastFirstElem = firstElem, lastLastElem = lastElem;
+    private double probableRatio;
     private int probableIndex(int num) {
-        return MathEx.roundInt(MathEx.divide(num, MathEx.divide(lastElem - firstElem, list.size() - 1)));
+        if (lastSize != size || lastFirstElem != firstElem || lastLastElem != lastElem) {
+            lastSize = size;
+            lastFirstElem = firstElem;
+            lastLastElem = lastElem;
+            probableRatio = MathEx.divide(lastSize, lastLastElem - lastFirstElem + 1);
+        }
+        return MathEx.roundInt(MathEx.divide(num, probableRatio));
     }
 
     private int bdsIndexOf(int num) {
@@ -121,6 +127,7 @@ public final class IntList implements List<Integer> {
     }
     public int indexOf(int num) {
         if (list.isEmpty()) return -1;
+        if (num < firstElem || num > lastElem) return -1;
         int bdsIndex = bdsIndexOf(num);
         if (bdsIndex == -1) return -1;
         return IntStream.range(0, bdsIndex).mapToObj(list::get).mapToInt(IntegerBounds::getLengthInc).sum() + varOper(list.get(bdsIndex), bds -> num - bds.getLowerBound());
@@ -128,6 +135,127 @@ public final class IntList implements List<Integer> {
     }
     public boolean contains(int num) {
         return indexOf(num) != -1;
+    }
+
+
+    private int ceilingBdsIndex(int num) {
+        int low = 0, high = list.size() - 1, ans = list.size();
+        while (low <= high) {
+            int mid = (low + high) >>> 1;
+            IntegerBounds bds = list.get(mid);
+            if (bds.getUpperBound() >= num) {
+                ans = mid;
+                high = mid - 1;
+            } else {
+                low = mid + 1;
+            }
+        }
+        return ans;
+    }
+
+    private int[] bdsIndexOf(int... nums) {
+        int[] out = new int[nums == null ? 0 : nums.length];
+        Arrays.fill(out, -1);
+
+        if (nums == null || nums.length == 0 || list.isEmpty()) return out;
+
+        int fallbackFrom = -1;
+        int cursor = ceilingBdsIndex(nums[0]);
+
+        for (int i = 0; i < nums.length; i++) {
+            int num = nums[i];
+
+            if (i > 0 && nums[i - 1] > num) {
+                fallbackFrom = i;
+                break;
+            }
+
+            if (num < firstElem || num > lastElem) {
+                out[i] = -1;
+                continue;
+            }
+
+            while (cursor < list.size() && list.get(cursor).getUpperBound() < num) {
+                cursor++;
+            }
+
+            if (cursor >= list.size()) {
+                out[i] = -1;
+                continue;
+            }
+
+            IntegerBounds bds = list.get(cursor);
+            out[i] = (num >= bds.getLowerBound() && num <= bds.getUpperBound()) ? cursor : -1;
+        }
+
+        if (fallbackFrom != -1) {
+            for (int i = fallbackFrom; i < nums.length; i++) {
+                out[i] = bdsIndexOf(nums[i]);
+            }
+        }
+
+        return out;
+    }
+
+    public int[] indexOf(int... nums) {
+        int[] out = new int[nums == null ? 0 : nums.length];
+        Arrays.fill(out, -1);
+
+        if (nums == null || nums.length == 0 || list.isEmpty()) return out;
+
+        int fallbackFrom = -1;
+        int cursor = ceilingBdsIndex(nums[0]);
+        int offset = 0;
+
+        for (int i = 0; i < cursor; i++) {
+            offset += list.get(i).getLengthInc();
+        }
+
+        for (int i = 0; i < nums.length; i++) {
+            int num = nums[i];
+
+            if (i > 0 && nums[i - 1] > num) {
+                fallbackFrom = i;
+                break;
+            }
+
+            if (num < firstElem || num > lastElem) {
+                out[i] = -1;
+                continue;
+            }
+
+            while (cursor < list.size() && list.get(cursor).getUpperBound() < num) {
+                offset += list.get(cursor).getLengthInc();
+                cursor++;
+            }
+
+            if (cursor >= list.size()) {
+                out[i] = -1;
+                continue;
+            }
+
+            IntegerBounds bds = list.get(cursor);
+            out[i] = (num >= bds.getLowerBound() && num <= bds.getUpperBound())
+                    ? offset + (num - bds.getLowerBound())
+                    : -1;
+        }
+
+        if (fallbackFrom != -1) {
+            for (int i = fallbackFrom; i < nums.length; i++) {
+                out[i] = indexOf(nums[i]);
+            }
+        }
+
+        return out;
+    }
+
+    public boolean[] contains(int... nums) {
+        int[] idxs = indexOf(nums);
+        boolean[] out = new boolean[idxs.length];
+        for (int i = 0; i < idxs.length; i++) {
+            out[i] = idxs[i] != -1;
+        }
+        return out;
     }
 
 
@@ -203,12 +331,158 @@ public final class IntList implements List<Integer> {
     public boolean add(int num) {
         return add(num, true);
     }
-
+/*
     public boolean addAll(int... nums) {
         return Arrays.stream(nums).allMatch(n -> add(n, false));
     }
     public boolean addAll(Collection<? extends Integer> nums) {
         return nums.stream().allMatch(n -> add(n, false));
+    }*/
+    // Replace IntList.addAll(int... nums) with this version,
+// and (optionally) update addAll(Collection) to delegate to it.
+
+    public boolean addAll(int... arr) {
+        if (arr == null || arr.length == 0) return true;
+
+//        int[] arr = Arrays.copyOf(nums, nums.length);
+        Arrays.sort(arr);
+
+        boolean allNew = true;
+
+        // De-dup (sorted). Keep a flag if duplicates were present in the input.
+        int write = 0;
+        int prev = INVALID_INT;
+        for (int v : arr) {
+            if (write == 0 || v != prev) {
+                arr[write++] = v;
+                prev = v;
+            } else {
+                allNew = false;
+            }
+        }
+        if (write == 0) return true;
+        arr = Arrays.copyOf(arr, write);
+
+        // Empty list fast-path: build bounds in one pass (like the constructor does) [15].
+        if (isEmpty()) {
+            list.clear();
+
+            int runLo = arr[0], runHi = runLo;
+            for (int i = 1; i < arr.length; i++) {
+                int v = arr[i];
+                if (v == runHi + 1) {
+                    runHi = v;
+                } else {
+                    list.add(new IntegerBounds(runLo, runHi));
+                    runLo = runHi = v;
+                }
+            }
+            list.add(new IntegerBounds(runLo, runHi));
+
+            firstElem = arr[0];
+            lastElem = arr[arr.length - 1];
+            size = arr.length;
+            return allNew;
+        }
+
+        // Start sweep near where the minimum "should" land [15].
+        int cursor = probableIndex(arr[0]);
+        if (cursor < 0) cursor = 0;
+        if (cursor >= list.size()) cursor = list.size() - 1;
+
+        // Nudge cursor locally so list[cursor] is "near" arr[0] without a full binary search.
+        while (cursor > 0 && list.get(cursor).getLowerBound() > arr[0]) cursor--;
+        while (cursor < list.size() - 1 && list.get(cursor).getUpperBound() < arr[0]) cursor++;
+
+        // Process in contiguous runs to minimize bound operations.
+        int i = 0;
+        while (i < arr.length) {
+            int runLo = arr[i], runHi = runLo;
+            while (i + 1 < arr.length && arr[i + 1] == runHi + 1) {
+                runHi = arr[++i];
+            }
+            i++;
+
+            final int runLen = runHi - runLo + 1;
+
+            // Advance cursor until the current bounds could overlap/attach (upper >= runLo-1).
+            while (cursor < list.size() && list.get(cursor).getUpperBound() < runLo - 1) {
+                cursor++;
+            }
+
+            // Past end => append (remaining runs are even larger).
+            if (cursor >= list.size()) {
+                list.add(new IntegerBounds(runLo, runHi));
+                size += runLen;
+                continue;
+            }
+
+            IntegerBounds b = list.get(cursor);
+            int bLo = b.getLowerBound();
+            int bHi = b.getUpperBound();
+
+            // Entire run is strictly before b => insert new bounds here.
+            if (runHi < bLo - 1) {
+                list.add(cursor, new IntegerBounds(runLo, runHi));
+                size += runLen;
+                cursor++; // skip inserted bounds
+                continue;
+            }
+
+            // Overlaps or attaches: merge run into b and absorb any following bounds that now touch.
+            int mergedLo = Math.min(runLo, bLo);
+            int mergedHi = Math.max(runHi, bHi);
+
+            int overlap = overlapLen(runLo, runHi, bLo, bHi);
+            if (overlap != 0) allNew = false;
+
+            int j = cursor + 1;
+            while (j < list.size() && list.get(j).getLowerBound() <= mergedHi + 1) {
+                IntegerBounds nb = list.get(j);
+                int nbLo = nb.getLowerBound();
+                int nbHi = nb.getUpperBound();
+
+                int ov = overlapLen(runLo, runHi, nbLo, nbHi);
+                if (ov != 0) {
+                    overlap += ov;
+                    allNew = false;
+                }
+
+                if (nbLo < mergedLo) mergedLo = nbLo;
+                if (nbHi > mergedHi) mergedHi = nbHi;
+                j++;
+            }
+
+            // Remove absorbed bounds (cursor+1 .. j-1).
+            if (j > cursor + 1) {
+                list.subList(cursor + 1, j).clear();
+            }
+
+            // Mutate the kept bounds in place.
+            b.setLowerBound(mergedLo);
+            b.setUpperBound(mergedHi);
+
+            // Only count truly-new integers from the run.
+            int added = runLen - overlap;
+            if (added > 0) size += added;
+        }
+
+        // Re-sync tracked endpoints [15].
+        firstElem = list.get(0).getLowerBound();
+        lastElem = list.get(list.size() - 1).getUpperBound();
+
+        return allNew;
+    }
+
+    private static int overlapLen(int aLo, int aHi, int bLo, int bHi) {
+        int lo = Math.max(aLo, bLo);
+        int hi = Math.min(aHi, bHi);
+        return (hi >= lo) ? (hi - lo + 1) : 0;
+    }
+
+    // Optional: make Collection version use the same fast path [1][15].
+    public boolean addAll(Collection<? extends Integer> nums) {
+        return addAll(CollectionsEx.toPrimitiveInt(nums));
     }
 
     @Override
@@ -463,7 +737,7 @@ public final class IntList implements List<Integer> {
     public List<Integer> toList() {
         return stream().toList();
     }
-
+/*
     @Override
     public Iterator<Integer> iterator() {
         Function<Integer, Boolean> removeParent = this::remove;
@@ -486,7 +760,88 @@ public final class IntList implements List<Integer> {
                 removeParent.apply(index);
             }
         };
-    }
+    }*/
+@Override
+public Iterator<Integer> iterator() {
+    if (isEmpty()) return Collections.emptyIterator();
+
+    return new Iterator<>() {
+        private int globalIndex = 0; // next index to return (0..size)
+        private int bdsIndex = 0;
+
+        private IntegerBounds bds = list.get(0);
+        private int curr = bds.getLowerBound();
+        private int upper = bds.getUpperBound();
+
+        private boolean canRemove = false;
+        private int lastReturned;
+
+        @Override
+        public boolean hasNext() {
+            return globalIndex < IntList.this.size;
+        }
+
+        @Override
+        public Integer next() {
+            if (!hasNext()) throw new NoSuchElementException();
+
+            final int out = curr;
+            lastReturned = out;
+            canRemove = true;
+
+            globalIndex++;
+
+            // advance within current bounds, otherwise hop to next bounds
+            if (curr < upper) {
+                curr++;
+            } else {
+                bdsIndex++;
+                if (bdsIndex < list.size()) {
+                    bds = list.get(bdsIndex);
+                    curr = bds.getLowerBound();
+                    upper = bds.getUpperBound();
+                }
+            }
+            return out;
+        }
+
+        @Override
+        public void remove() {
+            if (!canRemove) throw new IllegalStateException("next() must be called before remove()");
+            canRemove = false;
+
+            // Remove the element that was just returned.
+            IntList.this.removeElem(lastReturned);
+
+            // After removal, the "next" element is now at (globalIndex - 1).
+            globalIndex--;
+            seekToGlobalIndex(globalIndex);
+        }
+
+        private void seekToGlobalIndex(int idx) {
+            if (IntList.this.size <= 0 || list.isEmpty()) return;
+
+            int offset = 0;
+            for (int i = 0; i < list.size(); i++) {
+                IntegerBounds bb = list.get(i);
+                int len = bb.getLengthInc(); // inclusive length
+                int nextOffset = offset + len;
+
+                if (idx < nextOffset) {
+                    bdsIndex = i;
+                    bds = bb;
+                    curr = bb.getLowerBound() + (idx - offset);
+                    upper = bb.getUpperBound();
+                    return;
+                }
+                offset = nextOffset;
+            }
+
+            // idx == size(): position at end (no next element)
+            bdsIndex = list.size();
+        }
+    };
+}
 
 
     @Override

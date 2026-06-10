@@ -64,10 +64,11 @@ public class ForIncrement extends ForLoopBase {
         }
     }
     public void execute(BiConsumer<Double, ForIncrement> body) {
+        double places = MathEx.divide(1, BigDecimal.valueOf(increment).scale() * 10);
         for (position = start; position < end; position += increment) {
             this.Continue = false;
             this.Break = false;
-            position = MathEx.round(position, MathEx.divide(1, BigDecimal.valueOf(increment).scale() * 10));
+            position = MathEx.round(position, places);
             body.accept(position, this);
 
             if (this.Continue) continue;
@@ -75,7 +76,22 @@ public class ForIncrement extends ForLoopBase {
         }
     }
     public void execute(Consumer<Double> body) {
-        for (position = start; position < end; position += increment) body.accept(MathEx.round(position, MathEx.divide(1, BigDecimal.valueOf(increment).scale() * 10)));
+        ProgrammingEx.varExec(MathEx.divide(1, BigDecimal.valueOf(increment).scale() * 10), p -> { for (position = start; position < end; position += increment) body.accept(MathEx.round(position, p)); });
+    }
+    public void executeInt(BiConsumer<Integer, ForIncrement> body) {
+        for (int position = (int) start; position < end; position += (int) increment) {
+            this.Continue = false;
+            this.Break = false;
+            body.accept(position, this);
+
+            if (this.Continue) continue;
+            if (this.Break) break;
+        }
+    }
+
+    public void executeInt(Consumer<Integer> body) {
+        for (int position = (int) start; position < end; position += (int) increment)
+            body.accept(position);
     }
 
 

@@ -30,7 +30,7 @@ public class SwitchIf<T> {
     }
     @SafeVarargs
     public static <T> SwitchIf<T> ofDefault(ConditionalCase<T> defaultCase, ConditionalCase<T>... conds) {
-        return of(toList(conds), defaultCase);
+        return of(Arrays.asList(conds), defaultCase);
     }
     @SafeVarargs
     public static <T> SwitchIf<T> of(ConditionalCase<T>... conds) {
@@ -38,7 +38,7 @@ public class SwitchIf<T> {
     }
     @SafeVarargs
     public static <T> SwitchIf<T> ofDefault(Supplier<T> defaultCase, ConditionalCase<T>... conds) {
-        return of(toList(conds), ConditionalCase.of(() -> true, defaultCase));
+        return of(Arrays.asList(conds), ConditionalCase.of(() -> true, defaultCase));
     }
     @SafeVarargs
     public static <T> SwitchIf<T> ofDefaultVal(T defaultCase, ConditionalCase<T>... conds) {

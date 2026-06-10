@@ -1,7 +1,9 @@
 package com.elijahsarte.celtools.main.util.structures.shape;
 
 import com.elijahsarte.celtools.main.util.MathEx;
+import com.elijahsarte.celtools.main.util.ProgrammingEx;
 import com.elijahsarte.celtools.main.util.structures.bounds.ShapeBounds;
+import com.elijahsarte.celtools.main.util.structures.collections.IntList;
 import com.elijahsarte.celtools.main.util.structures.collections.point.PointCollection;
 
 import java.awt.*;
@@ -53,7 +55,7 @@ public class ShapeContour implements Iterable<Point> {
             initEmpty();
             return;
         }
-
+/*
         Set<Long> all = new HashSet<>((int) (pts.size() / 0.75) + 1);
         pts.onRaw();
         pts.forEachRaw((x, ys) -> {
@@ -66,6 +68,10 @@ public class ShapeContour implements Iterable<Point> {
         pts.forEachRaw((x, ys) -> {
             for (int i = 0, n = ys.size(); i < n; i++) {
                 int y = ys.get(i);
+                // Fetch neighbor columns once
+                IntList ysL = pts.getYesAtX(x - 1);
+                IntList ysR = pts.getYesAtX(x + 1);
+                // Current column already known as `ys`
                 long code = MathEx.encode(x, y);
                 boolean isBoundary =
                         !all.contains(MathEx.encode(x - 1, y)) ||
@@ -73,6 +79,25 @@ public class ShapeContour implements Iterable<Point> {
                                 !all.contains(MathEx.encode(x, y - 1)) ||
                                 !all.contains(MathEx.encode(x, y + 1));
                 if (isBoundary) boundary.add(code);
+            }
+        });*/
+
+        Set<Long> boundary = new HashSet<>((int) (pts.size() / 0.75) + 1);
+
+        pts.onRaw();
+        pts.forEachRaw((x, ys) -> {
+            // Fetch neighbor columns once
+            List<IntList> ysA = pts.getYesAtXOneFellSwoop(x - 1, x + 1);
+            IntList ysL = ysA.get(0), ysR = ysA.get(1);
+            //IntList ysL = pts.getYesAtX(x - 1);
+            //IntList ysR = pts.getYesAtX(x + 1);
+            // Current column already known as `ys`
+            for (int y : ys) {
+                boolean isBoundary =
+                        !colContainsY(ysL, y) ||
+                                !colContainsY(ysR, y) ||
+                                ProgrammingEx.varOper(ys.contains(y - 1, y + 1), b -> !b[0] || !b[1]);
+                if (isBoundary) boundary.add(MathEx.encode(x, y)); // [4]
             }
         });
 
@@ -157,6 +182,7 @@ public class ShapeContour implements Iterable<Point> {
         }
         return best;
     }
+    /*
     private List<Point> followExternal(Set<Long> boundary) {
         if (boundary.isEmpty()) return Collections.emptyList();
 
@@ -208,6 +234,136 @@ public class ShapeContour implements Iterable<Point> {
 
         dedupeSpikes(out);
         return out;
+    }*/
+    private List<Point> followExternal(Set<Long> boundary) {
+        if (boundary == null || boundary.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        BoundaryIndex idx = buildBoundaryIndex(boundary);
+        HashMap<Integer, IntList> columns = idx.columns;
+
+        final int sx = idx.startX;
+        final int sy = idx.startY;
+
+        int cx = sx;
+        int cy = sy;
+
+        // Same seed convention as the current method:
+        // pretend we approached the start from the west, so initial dir is East.
+        int dir = 0;
+
+        ArrayList<Point> out = new ArrayList<>(Math.max(16, boundary.size()));
+        HashSet<Long> seenStates = new HashSet<>(Math.max(16, boundary.size() * 2));
+
+        // Safety guard only; normally the repeated-state check ends the walk.
+        int guard = Math.max(64, boundary.size() * 4);
+
+        while (guard-- > 0) {
+            if (out.isEmpty()) {
+                out.add(new Point(cx, cy));
+            } else {
+                Point last = out.get(out.size() - 1);
+                if (last.x != cx || last.y != cy) {
+                    out.add(new Point(cx, cy));
+                }
+            }
+
+            long stateKey = encodeWalkState(cx, cy, dir);
+            if (!seenStates.add(stateKey)) {
+                break;
+            }
+
+            // Only 3 column fetches per step instead of hashing 8 encoded longs.
+            IntList ysLeft  = columns.get(cx - 1);
+            IntList ysHere  = columns.get(cx);
+            IntList ysRight = columns.get(cx + 1);
+
+            // Start scanning one step clockwise from the backtrack direction.
+            int scan = (dir + 6) & 7;
+            boolean advanced = false;
+
+            for (int k = 0; k < 8; k++) {
+                int nd = (scan + k) & 7;
+                int dx = CHAIN8[nd][0];
+                int dy = CHAIN8[nd][1];
+
+                int nx = cx + dx;
+                int ny = cy + dy;
+
+                IntList col = dx < 0 ? ysLeft : (dx > 0 ? ysRight : ysHere);
+                if (col == null || !col.contains(ny)) {
+                    continue;
+                }
+
+                cx = nx;
+                cy = ny;
+                dir = nd;
+                advanced = true;
+                break;
+            }
+
+            if (!advanced) {
+                break;
+            }
+        }
+
+        dedupeSpikes(out);
+
+        if (out.size() >= 2) {
+            Point first = out.get(0);
+            Point last = out.get(out.size() - 1);
+            if (first.x == last.x && first.y == last.y) {
+                out.remove(out.size() - 1);
+            }
+        }
+
+        return out;
+    }
+
+    private static final class BoundaryIndex {
+        private final HashMap<Integer, IntList> columns;
+        private final int startX;
+        private final int startY;
+
+        private BoundaryIndex(HashMap<Integer, IntList> columns, int startX, int startY) {
+            this.columns = columns;
+            this.startX = startX;
+            this.startY = startY;
+        }
+    }
+
+    private static BoundaryIndex buildBoundaryIndex(Set<Long> boundary) {
+        HashMap<Integer, IntList> columns =
+                new HashMap<>(Math.max(16, boundary.size()));
+
+        int sx = 0;
+        int sy = Integer.MIN_VALUE;
+
+        for (long code : boundary) {
+            int x = (int) (code >>> 32);
+            int y = (int) code;
+
+            IntList ys = columns.get(x);
+            if (ys == null) {
+                ys = new IntList();
+                columns.put(x, ys);
+            }
+            ys.add(y);
+
+            // Keep the same start-point rule as the existing code:
+            // highest y, then smallest x.
+            if (y > sy || (y == sy && x < sx)) {
+                sx = x;
+                sy = y;
+            }
+        }
+
+        return new BoundaryIndex(columns, sx, sy);
+    }
+
+    private static long encodeWalkState(int x, int y, int dir) {
+        return (enc(x, y) << 3) ^ dir;
     }
 
     private List<Point> traceLargestLoop(Set<Long> boundary) {
@@ -228,7 +384,7 @@ public class ShapeContour implements Iterable<Point> {
                 int x = (int) (c >>> 32), y = (int) c;
                 for (int i = 0; i < 8; i++) {
                     int nx = x + CHAIN8[i][0], ny = y + CHAIN8[i][1];
-                    long nc = enc(nx, ny);
+                    Long nc = enc(nx, ny);
                     if (boundary.contains(nc) && seen.add(nc)) q.addLast(nc);
                 }
             }
@@ -237,14 +393,17 @@ public class ShapeContour implements Iterable<Point> {
 
         List<Point> best = Collections.emptyList();
         double bestA = -1.0;
-        for (int t = 0; t < comps.size(); t++) {
+        for (List<Long> comp : comps) {
             // project component to a set again
-            Set<Long> compSet = new HashSet<>((int) (comps.get(t).size() / 0.75) + 1);
-            for (int i = 0; i < comps.get(t).size(); i++) compSet.add(comps.get(t).get(i));
+            Set<Long> compSet = new HashSet<>((int) (comp.size() / 0.75) + 1);
+            compSet.addAll(comp);
             List<Point> loop = followExternal(compSet);
             if (!loop.isEmpty()) {
                 double a = Math.abs(signedArea(loop));
-                if (a > bestA || (a == bestA && loop.size() > best.size())) { bestA = a; best = loop; }
+                if (a > bestA || (a == bestA && loop.size() > best.size())) {
+                    bestA = a;
+                    best = loop;
+                }
             }
         }
         return best;
@@ -255,13 +414,15 @@ public class ShapeContour implements Iterable<Point> {
         if (comp.isEmpty()) return Collections.emptyList();
 
         Set<Long> compSet = new HashSet<>((int) (comp.size() / 0.75) + 1);
-        for (int i = 0, n = comp.size(); i < n; i++) compSet.add(comp.get(i));
+        compSet.addAll(comp);
 
         int sx = 0, sy = Integer.MIN_VALUE;
-        for (int i = 0, n = comp.size(); i < n; i++) {
-            long code = comp.get(i);
+        for (long code : comp) {
             int x = (int) (code >>> 32), y = (int) code;
-            if (y > sy || (y == sy && x < sx)) { sx = x; sy = y; }
+            if (y > sy || (y == sy && x < sx)) {
+                sx = x;
+                sy = y;
+            }
         }
 
         int bx = sx - 1, by = sy; // backtrack seed: left of start
@@ -330,15 +491,17 @@ public class ShapeContour implements Iterable<Point> {
 
         // de-dup and remove spikes A,B,A
         List<Point> clean = new ArrayList<>(out.size());
-        for (int i = 0; i < out.size(); i++) {
-            Point p = out.get(i);
+        for (Point p : out) {
             int m = clean.size();
             if (m > 0) {
                 Point last = clean.get(m - 1);
                 if (last.x == p.x && last.y == p.y) continue;
                 if (m >= 2) {
                     Point prev = clean.get(m - 2);
-                    if (prev.x == p.x && prev.y == p.y) { clean.remove(m - 1); continue; }
+                    if (prev.x == p.x && prev.y == p.y) {
+                        clean.remove(m - 1);
+                        continue;
+                    }
                 }
             }
             clean.add(p);
@@ -521,8 +684,8 @@ public class ShapeContour implements Iterable<Point> {
         this.rightPoint = new Point(right);
 
         NavigableSet<Integer> xs = new TreeSet<>();
-        for (int i = 0; i < ordered.size(); i++) {
-            xs.add(ordered.get(i).x);
+        for (Point point : ordered) {
+            xs.add(point.x);
         }
         this.xSet = Collections.unmodifiableNavigableSet(xs);
 
@@ -917,6 +1080,1807 @@ public ShapeContour(PointCollection points) {
         return edges.get(normalized);
     }
 
+    public ShapeContour halfwayOld(ShapeContour other) {
+        Objects.requireNonNull(other, "other");
+
+        if (this.isEmpty()) return other;
+        if (other.isEmpty()) return this;
+
+        boolean otherInsideThis = this.inside(other);
+        boolean thisInsideOther = other.inside(this);
+
+        ShapeContour outer;
+        ShapeContour inner;
+
+        if (otherInsideThis && !thisInsideOther) {
+            outer = this;
+            inner = other;
+        } else if (thisInsideOther && !otherInsideThis) {
+            outer = other;
+            inner = this;
+        } else {
+            outer = this.area() >= other.area() ? this : other;
+            inner = outer == this ? other : this;
+        }
+
+        int samples = Math.max(outer.size(), inner.size());
+        if (samples <= 0) {
+            return ShapeContour.empty();
+        }
+
+        PointCollection midway = new PointCollection();
+
+        for (int i = 0; i < samples; i++) {
+            double t = (double) i / samples;
+
+            Point2D.Double pOuter = outer.pointOnPerimeterNormalized(t);
+            Point2D.Double pInner = inner.pointOnPerimeterNormalized(t);
+
+            if (pOuter == null || pInner == null) {
+                continue;
+            }
+
+            int midX = (int) Math.round((pOuter.x + pInner.x) / 2.0);
+            int midY = (int) Math.round((pOuter.y + pInner.y) / 2.0);
+            midway.add(new Point(midX, midY));
+        }
+
+        return midway.isEmpty() ? ShapeContour.empty() : new ShapeContour(midway);
+    }
+    // === ShapeContour.java ===
+// Add these methods inside ShapeContour (e.g., near other public mutators)
+
+    public ShapeContour expand(int pixels) {
+        if (pixels <= 0 || isEmpty()) return this;
+
+        PointCollection solid = rasterizeFilledPixels();
+        if (solid.isEmpty()) return ShapeContour.empty();
+
+        PointCollection dilated = dilateFilledPixels(solid, pixels);
+        if (dilated.isEmpty()) return ShapeContour.empty();
+
+        dilated.fillHoles();
+        return new ShapeContour(dilated);
+    }
+
+    private PointCollection rasterizeFilledPixels() {
+        PointCollection solid = new PointCollection();
+        Iterator<Point> it = insideIterator();
+        while (it.hasNext()) {
+            solid.add(it.next());
+        }
+        return solid;
+    }
+
+    private static PointCollection dilateFilledPixels(PointCollection solid, int radius) {
+        if (radius <= 0 || solid == null || solid.isEmpty()) {
+            return solid == null ? new PointCollection() : new PointCollection(solid);
+        }
+
+        int[] yReachByDx = buildDiskYReach(radius);
+
+        HashMap<Integer, ArrayList<int[]>> spansByX = new HashMap<>(
+                Math.max(16, solid.width() + (radius * 2) + 1)
+        );
+
+        solid.onRaw();
+        solid.forEachRaw((x, ys) -> {
+            if (ys == null || ys.isEmpty()) return;
+
+            ys.onRaw();
+            ys.forEachRaw(bounds -> {
+                int lo = bounds.getLowerBound();
+                int hi = bounds.getUpperBound();
+
+                for (int dx = -radius; dx <= radius; dx++) {
+                    int reach = yReachByDx[dx + radius];
+                    int outX = x + dx;
+
+                    spansByX
+                            .computeIfAbsent(outX, k -> new ArrayList<>())
+                            .add(new int[] { lo - reach, hi + reach });
+                }
+            });
+        });
+
+        PointCollection out = new PointCollection();
+
+        for (Map.Entry<Integer, ArrayList<int[]>> entry : spansByX.entrySet()) {
+            int x = entry.getKey();
+            ArrayList<int[]> spans = entry.getValue();
+            if (spans.isEmpty()) continue;
+
+            spans.sort(Comparator.comparingInt(a -> a[0]));
+
+            IntList mergedYs = new IntList();
+
+            int currLo = spans.get(0)[0];
+            int currHi = spans.get(0)[1];
+
+            for (int i = 1; i < spans.size(); i++) {
+                int lo = spans.get(i)[0];
+                int hi = spans.get(i)[1];
+
+                if (lo <= currHi + 1) {
+                    if (hi > currHi) currHi = hi;
+                } else {
+                    for (int y = currLo; y <= currHi; y++) {
+                        mergedYs.add(y);
+                    }
+                    currLo = lo;
+                    currHi = hi;
+                }
+            }
+
+            for (int y = currLo; y <= currHi; y++) {
+                mergedYs.add(y);
+            }
+
+            out.addAtX(x, mergedYs);
+        }
+
+        return out;
+    }
+
+    private static int[] buildDiskYReach(int radius) {
+        int[] out = new int[(radius * 2) + 1];
+        long r2 = (long) radius * radius;
+
+        for (int dx = -radius; dx <= radius; dx++) {
+            long dx2 = (long) dx * dx;
+            out[dx + radius] = floorInt(Math.sqrt(r2 - dx2));
+        }
+
+        return out;
+    }
+
+    public ShapeContour contract(int pixels) {
+        if (pixels <= 0 || isEmpty()) return this;
+        return offsetBy(-pixels);
+    }
+
+    /**
+     * Fast approximate offset using radial scaling about centroid:
+     * expands/contracts by shifting each vertex along its centroid ray.
+     * This avoids any O(area) raster work and avoids inside()/contains() loops.
+     */
+    private ShapeContour offsetBy(int deltaPixels) {
+        if (isEmpty()) return ShapeContour.empty();
+
+        // Ensure centroid exists
+        Point2D.Double c = this.centroid;
+        if (c == null) c = this.centroid();
+
+        // Build new vertex set by moving each contour point along the centroid ray.
+        // Then rebuild to a clean contour via rebuildFromVertices (sort-by-angle pipeline).
+        int n = this.size();
+        ArrayList<Point> moved = new ArrayList<>(n);
+
+        // Small optimization: collapse repeated points after rounding
+        long lastKey = Long.MIN_VALUE;
+
+        for (int i = 0; i < n; i++) {
+            Point p = contour.get(i);
+            double vx = p.x - c.x;
+            double vy = p.y - c.y;
+            double r = Math.hypot(vx, vy);
+
+            // If r==0, arbitrary direction; keep point unchanged
+            if (r <= 1e-9) {
+                long k = MathEx.encode(p.x, p.y);
+                if (k != lastKey) {
+                    moved.add(new Point(p));
+                    lastKey = k;
+                }
+                continue;
+            }
+
+            double newR = r + deltaPixels;
+            // If contracting beyond centroid, clamp to a tiny radius (prevents inversion)
+            if (newR < 1.0) newR = 1.0;
+
+            double s = newR / r;
+            int nx = (int) Math.round(c.x + vx * s);
+            int ny = (int) Math.round(c.y + vy * s);
+
+            long k = MathEx.encode(nx, ny);
+            if (k != lastKey) {
+                moved.add(new Point(nx, ny));
+                lastKey = k;
+            }
+        }
+
+        if (moved.size() < 3) {
+            // contraction could degenerate; return empty instead of pathological contour
+            return ShapeContour.empty();
+        }
+
+        ShapeContour out = new ShapeContour(Collections.emptyList());
+        out.rebuildFromVertices(moved);
+        return out;
+    }
+
+    /**
+     * Much faster halfway:
+     * - avoids inside(ShapeContour) which scans bounding boxes and calls contains/inside repeatedly [10]
+     * - avoids calling pointOnPerimeterNormalized() in a loop (each call scans cumulativeArcLengths linearly) [10]
+     * - pairs points by normalized arc using a single pass over arc arrays (O(n+m))
+     */
+    /*
+    public ShapeContour halfway(ShapeContour other) {
+        Objects.requireNonNull(other, "other");
+
+        final boolean debug = true; // turn off when you're done debugging
+        final String tag = "[ShapeContour.halfway] ";
+
+        if (this.isEmpty()) {
+            if (debug) System.out.println(tag + "this is empty -> returning other");
+            return other;
+        }
+        if (other.isEmpty()) {
+            if (debug) System.out.println(tag + "other is empty -> returning this");
+            return this;
+        }
+
+        boolean otherInsideThis = this.inside(other);
+        boolean thisInsideOther = other.inside(this);
+
+        ShapeContour outer;
+        ShapeContour inner;
+
+        if (otherInsideThis && !thisInsideOther) {
+            outer = this;
+            inner = other;
+        } else if (thisInsideOther && !otherInsideThis) {
+            outer = other;
+            inner = this;
+        } else {
+            outer = this.area() >= other.area() ? this : other;
+            inner = outer == this ? other : this;
+        }
+
+        int samples = Math.max(64, Math.max(outer.size(), inner.size()) * 2);
+
+        if (debug) {
+            System.out.println(tag + "=== DEBUG START ===");
+            debugPrintContour(tag + "this", this, 12);
+            debugPrintContour(tag + "other", other, 12);
+            System.out.printf(tag + "otherInsideThis=%s, thisInsideOther=%s%n", otherInsideThis, thisInsideOther);
+            System.out.printf(tag + "chosen outer=%s, inner=%s%n",
+                    outer == this ? "this" : "other",
+                    inner == this ? "this" : "other");
+            System.out.printf(tag + "samples=%d%n", samples);
+        }
+
+        List<Point2D.Double> outerSamples = samplePerimeter(outer, samples);
+        List<Point2D.Double> innerSamples = samplePerimeter(inner, samples);
+
+        int bestShift = findBestCircularShift(outerSamples, innerSamples);
+        double bestRmse            = computeShiftRmse(outerSamples, innerSamples, bestShift);
+
+        List<Point2D.Double> reversedInnerSamples = reverseSamples(innerSamples);
+        int reversedShift = findBestCircularShift(outerSamples, reversedInnerSamples);
+        double reversedRmse = computeShiftRmse(outerSamples, reversedInnerSamples, reversedShift);
+
+        boolean useReversed = reversedRmse < bestRmse;
+        List<Point2D.Double> alignedInnerSamples = useReversed ? reversedInnerSamples : innerSamples;
+        int appliedShift = useReversed ? reversedShift : bestShift;
+        double appliedRmse = useReversed ? reversedRmse : bestRmse;
+
+        if (debug) {
+            System.out.printf(tag + "forwardShift=%d, forwardRmse=%.4f%n", bestShift, bestRmse);
+            System.out.printf(tag + "reversedShift=%d, reversedRmse=%.4f%n", reversedShift, reversedRmse);
+            System.out.printf(tag + "usingReversed=%s, appliedShift=%d, appliedRmse=%.4f%n",
+                    useReversed, appliedShift, appliedRmse);
+            debugPrintSamples(tag + "outerSamples", outerSamples, 12);
+            debugPrintSamples(tag + "innerSamples", innerSamples, 12);
+        }
+
+        List<Point> midwayOrdered = new ArrayList<>(samples);
+
+        for (int i = 0; i < samples; i++) {
+            Point2D.Double pOuter = outerSamples.get(i);
+            Point2D.Double pInner = alignedInnerSamples.get((i + appliedShift) % samples);
+
+            int midX = roundInt((pOuter.x + pInner.x) / 2.0);
+            int midY = roundInt((pOuter.y + pInner.y) / 2.0);
+            Point mid = new Point(midX, midY);
+
+            if (midwayOrdered.isEmpty() || !samePoint(midwayOrdered.get(midwayOrdered.size() - 1), mid)) {
+                midwayOrdered.add(mid);
+            }
+
+            if (debug && (i < 16 || i == samples - 1)) {
+                System.out.printf(
+                        tag + "i=%d outer=(%.3f, %.3f) inner=(%.3f, %.3f) mid=(%d, %d)%n",
+                        i, pOuter.x, pOuter.y, pInner.x, pInner.y, mid.x, mid.y
+                );
+            }
+        }
+
+        midwayOrdered = normalizeOrderedLoop(midwayOrdered);
+
+        if (debug) {
+            debugPrintPoints(tag + "midwayOrdered", midwayOrdered, 20);
+        }
+
+        if (midwayOrdered.size() < 3) {
+            if (debug) {
+                System.out.println(tag + "midwayOrdered has fewer than 3 vertices -> returning empty");
+                System.out.println(tag + "=== DEBUG END ===");
+            }
+            return ShapeContour.empty();
+        }
+
+        ShapeContour result = new ShapeContour(new PointCollection());
+        result.finalizeFromOrdered(midwayOrdered);
+
+        if (debug) {
+            debugPrintContour(tag + "result", result, 16);
+            System.out.println(tag + "=== DEBUG END ===");
+        }
+
+        return result;
+    }*/
+
+// The true working one
+    /*
+    public ShapeContour halfway(ShapeContour other) {
+        Objects.requireNonNull(other, "other");
+
+        final boolean debug = false;
+        final String tag = "[ShapeContour.halfway] ";
+
+        if (this.isEmpty()) {
+            if (debug) System.out.println(tag + "this is empty -> returning other");
+            return other;
+        }
+        if (other.isEmpty()) {
+            if (debug) System.out.println(tag + "other is empty -> returning this");
+            return this;
+        }
+
+        boolean otherInsideThis = this.inside(other);
+        boolean thisInsideOther = other.inside(this);
+
+        ShapeContour outer;
+        ShapeContour inner;
+
+        if (otherInsideThis && !thisInsideOther) {
+            outer = this;
+            inner = other;
+        } else if (thisInsideOther && !otherInsideThis) {
+            outer = other;
+            inner = this;
+        } else {
+            outer = this.area() >= other.area() ? this : other;
+            inner = outer == this ? other : this;
+        }
+
+        Point2D.Double center = chooseHalfwayCenter(outer, inner);
+        Point centerPt = new Point(roundInt(center.x), roundInt(center.y));
+
+        int samples = Math.max(720, Math.max(outer.size(), inner.size()) * 2);
+
+        if (debug) {
+            System.out.println(tag + "=== DEBUG START ===");
+            debugPrintContour(tag + "this", this, 12);
+            debugPrintContour(tag + "other", other, 12);
+            System.out.printf(tag + "otherInsideThis=%s, thisInsideOther=%s%n", otherInsideThis, thisInsideOther);
+            System.out.printf(tag + "chosen outer=%s, inner=%s%n",
+                    outer == this ? "this" : "other",
+                    inner == this ? "this" : "other");
+            System.out.printf(tag + "center=(%.3f, %.3f) centerRounded=%s%n", center.x, center.y, centerPt);
+            System.out.printf(tag + "center inside inner=%s inside outer=%s%n",
+                    inner.inside(centerPt), outer.inside(centerPt));
+            System.out.printf(tag + "samples=%d%n", samples);
+        }
+
+        List<Point> midwayOrdered = new ArrayList<>(samples);
+        int hitCount = 0;
+        int missCount = 0;
+
+        for (int i = 0; i < samples; i++) {
+            double theta = (Math.PI * 2.0 * i) / samples;
+
+            Point2D.Double pInner = rayContourIntersection(center, inner, theta);
+            Point2D.Double pOuter = rayContourIntersection(center, outer, theta);
+
+            if (pInner == null || pOuter == null) {
+                missCount++;
+                if (debug && missCount <= 24) {
+                    System.out.printf(tag + "MISS i=%d theta=%.6f innerHit=%s outerHit=%s%n",
+                            i, theta, pInner, pOuter);
+                }
+                continue;
+            }
+
+            hitCount++;
+
+            Point2D.Double midD = new Point2D.Double(
+                    (pInner.x + pOuter.x) / 2.0,
+                    (pInner.y + pOuter.y) / 2.0
+            );
+
+            Point mid = clampMidpointToBand(midD, center, inner, outer, theta);
+
+            if (midwayOrdered.isEmpty() || !samePoint(midwayOrdered.get(midwayOrdered.size() - 1), mid)) {
+                midwayOrdered.add(mid);
+            }
+
+            if (debug && (i < 20 || i == samples - 1)) {
+                System.out.printf(
+                        tag + "i=%d theta=%.6f inner=(%.3f, %.3f) outer=(%.3f, %.3f) midD=(%.3f, %.3f) mid=(%d, %d)%n",
+                        i, theta,
+                        pInner.x, pInner.y,
+                        pOuter.x, pOuter.y,
+                        midD.x, midD.y,
+                        mid.x, mid.y
+                );
+            }
+        }
+
+        if (debug) {
+            System.out.printf(tag + "hitCount=%d missCount=%d midwayRawCount=%d%n",
+                    hitCount, missCount, midwayOrdered.size());
+        }
+
+        midwayOrdered = normalizeOrderedLoop(midwayOrdered);
+
+        int insideInnerCount = 0;
+        int outsideOuterCount = 0;
+        double maxStep = 0.0;
+        int maxStepIndex = -1;
+
+        for (int i = 0; i < midwayOrdered.size(); i++) {
+            Point a = midwayOrdered.get(i);
+            Point b = midwayOrdered.get((i + 1) % midwayOrdered.size());
+
+            if (inner.inside(a)) insideInnerCount++;
+            if (!outer.inside(a)) outsideOuterCount++;
+
+            double step = a.distance(b);
+            if (step > maxStep) {
+                maxStep = step;
+                maxStepIndex = i;
+            }
+        }
+
+        Point stepA = (maxStepIndex >= 0 && !midwayOrdered.isEmpty())
+                ? midwayOrdered.get(maxStepIndex)
+                : null;
+        Point stepB = (maxStepIndex >= 0 && !midwayOrdered.isEmpty())
+                ? midwayOrdered.get((maxStepIndex + 1) % midwayOrdered.size())
+                : null;
+
+        if (debug) {
+            debugPrintPoints(tag + "midwayOrdered", midwayOrdered, 24);
+            System.out.printf(tag + "bandCheck insideInnerCount=%d outsideOuterCount=%d%n",
+                    insideInnerCount, outsideOuterCount);
+            System.out.printf(tag + "maxStep=%.4f at segment %d (%s -> %s)%n",
+                    maxStep, maxStepIndex, stepA, stepB);
+        }
+
+        if (hitCount < 3 || midwayOrdered.size() < 3) {
+            if (debug) {
+                System.out.println(tag + "not enough valid midpoint samples -> returning empty");
+                System.out.println(tag + "=== DEBUG END ===");
+            }
+            return ShapeContour.empty();
+        }
+
+        ShapeContour result = new ShapeContour(new PointCollection());
+        result.finalizeFromOrdered(midwayOrdered);
+
+        if (debug) {
+            int resultInsideInnerCount = 0;
+            int resultOutsideOuterCount = 0;
+
+            for (Point p : result.contour) {
+                if (inner.inside(p)) resultInsideInnerCount++;
+                if (!outer.inside(p)) resultOutsideOuterCount++;
+            }
+
+            debugPrintContour(tag + "result", result, 16);
+            System.out.printf(tag + "resultBandCheck insideInnerCount=%d outsideOuterCount=%d%n",
+                    resultInsideInnerCount, resultOutsideOuterCount);
+            System.out.println(tag + "=== DEBUG END ===");
+        }
+
+        return result;
+    }*/
+    // Replace the current halfway(...) with this version.
+
+    private static final class RayHitIndex {
+        private final Point2D.Double origin;
+        private final Point2D.Double[] hits;
+
+        private RayHitIndex(Point2D.Double origin, Point2D.Double[] hits) {
+            this.origin = origin == null ? null : new Point2D.Double(origin.x, origin.y);
+            this.hits = hits;
+        }
+
+        private Point2D.Double hit(int sampleIndex) {
+            if (hits == null || hits.length == 0) {
+                return null;
+            }
+            int idx = Math.floorMod(sampleIndex, hits.length);
+            Point2D.Double p = hits[idx];
+            return p == null ? null : new Point2D.Double(p.x, p.y);
+        }
+
+        private int size() {
+            return hits == null ? 0 : hits.length;
+        }
+    }
+
+    public ShapeContour halfway(ShapeContour other) {
+        Objects.requireNonNull(other, "other");
+
+        final boolean debug = false;
+        final String tag = "[ShapeContour.halfway] ";
+
+        if (this.isEmpty()) {
+            if (debug) System.out.println(tag + "this is empty -> returning other");
+            return other;
+        }
+        if (other.isEmpty()) {
+            if (debug) System.out.println(tag + "other is empty -> returning this");
+            return this;
+        }
+
+        boolean otherInsideThis = this.inside(other);
+        boolean thisInsideOther = other.inside(this);
+
+        ShapeContour outer;
+        ShapeContour inner;
+
+        if (otherInsideThis && !thisInsideOther) {
+            outer = this;
+            inner = other;
+        } else if (thisInsideOther && !otherInsideThis) {
+            outer = other;
+            inner = this;
+        } else {
+            outer = this.area() >= other.area() ? this : other;
+            inner = outer == this ? other : this;
+        }
+
+        Point2D.Double center = chooseHalfwayCenter(outer, inner);
+        Point centerPt = new Point(roundInt(center.x), roundInt(center.y));
+
+        int samples = Math.max(720, Math.max(outer.size(), inner.size()) * 2);
+
+        RayHitIndex innerHits = buildRayHitIndex(center, inner, samples);
+        RayHitIndex outerHits = buildRayHitIndex(center, outer, samples);
+
+        if (debug) {
+            System.out.println(tag + "=== DEBUG START ===");
+            debugPrintContour(tag + "this", this, 12);
+            debugPrintContour(tag + "other", other, 12);
+            System.out.printf(tag + "otherInsideThis=%s, thisInsideOther=%s%n", otherInsideThis, thisInsideOther);
+            System.out.printf(tag + "chosen outer=%s, inner=%s%n",
+                    outer == this ? "this" : "other",
+                    inner == this ? "this" : "other");
+            System.out.printf(tag + "center=(%.3f, %.3f) centerRounded=%s%n", center.x, center.y, centerPt);
+            System.out.printf(tag + "center inside inner=%s inside outer=%s%n",
+                    inner.inside(centerPt), outer.inside(centerPt));
+            System.out.printf(tag + "samples=%d%n", samples);
+        }
+
+        List<Point> midwayOrdered = new ArrayList<>(samples);
+        int hitCount = 0;
+        int missCount = 0;
+
+        for (int i = 0; i < samples; i++) {
+            double theta = (Math.PI * 2.0 * i) / samples;
+
+            Point2D.Double pInner = innerHits.hit(i);
+            Point2D.Double pOuter = outerHits.hit(i);
+
+            if (pInner == null || pOuter == null) {
+                missCount++;
+                if (debug && missCount <= 24) {
+                    System.out.printf(tag + "MISS i=%d theta=%.6f innerHit=%s outerHit=%s%n",
+                            i, theta, pInner, pOuter);
+                }
+                continue;
+            }
+
+            hitCount++;
+
+            Point2D.Double midD = new Point2D.Double(
+                    (pInner.x + pOuter.x) / 2.0,
+                    (pInner.y + pOuter.y) / 2.0
+            );
+
+            Point mid = clampMidpointToBand(midD, center, pInner, pOuter, theta, inner, outer);
+
+            if (midwayOrdered.isEmpty() || !samePoint(midwayOrdered.get(midwayOrdered.size() - 1), mid)) {
+                midwayOrdered.add(mid);
+            }
+
+            if (debug && (i < 20 || i == samples - 1)) {
+                System.out.printf(
+                        tag + "i=%d theta=%.6f inner=(%.3f, %.3f) outer=(%.3f, %.3f) midD=(%.3f, %.3f) mid=(%d, %d)%n",
+                        i, theta,
+                        pInner.x, pInner.y,
+                        pOuter.x, pOuter.y,
+                        midD.x, midD.y,
+                        mid.x, mid.y
+                );
+            }
+        }
+
+        if (debug) {
+            System.out.printf(tag + "hitCount=%d missCount=%d midwayRawCount=%d%n",
+                    hitCount, missCount, midwayOrdered.size());
+        }
+
+        midwayOrdered = normalizeOrderedLoop(midwayOrdered);
+
+        int insideInnerCount = 0;
+        int outsideOuterCount = 0;
+        double maxStep = 0.0;
+        int maxStepIndex = -1;
+
+        for (int i = 0; i < midwayOrdered.size(); i++) {
+            Point a = midwayOrdered.get(i);
+            Point b = midwayOrdered.get((i + 1) % midwayOrdered.size());
+
+            if (inner.inside(a)) insideInnerCount++;
+            if (!outer.inside(a)) outsideOuterCount++;
+
+            double step = a.distance(b);
+            if (step > maxStep) {
+                maxStep = step;
+                maxStepIndex = i;
+            }
+        }
+
+        Point stepA = (maxStepIndex >= 0 && !midwayOrdered.isEmpty())
+                ? midwayOrdered.get(maxStepIndex)
+                : null;
+        Point stepB = (maxStepIndex >= 0 && !midwayOrdered.isEmpty())
+                ? midwayOrdered.get((maxStepIndex + 1) % midwayOrdered.size())
+                : null;
+
+        if (debug) {
+            debugPrintPoints(tag + "midwayOrdered", midwayOrdered, 24);
+            System.out.printf(tag + "bandCheck insideInnerCount=%d outsideOuterCount=%d%n",
+                    insideInnerCount, outsideOuterCount);
+            System.out.printf(tag + "maxStep=%.4f at segment %d (%s -> %s)%n",
+                    maxStep, maxStepIndex, stepA, stepB);
+        }
+
+        if (hitCount < 3 || midwayOrdered.size() < 3) {
+            if (debug) {
+                System.out.println(tag + "not enough valid midpoint samples -> returning empty");
+                System.out.println(tag + "=== DEBUG END ===");
+            }
+            return ShapeContour.empty();
+        }
+
+        ShapeContour result = new ShapeContour(new PointCollection());
+        result.finalizeFromOrdered(midwayOrdered);
+
+        if (debug) {
+            int resultInsideInnerCount = 0;
+            int resultOutsideOuterCount = 0;
+
+            for (Point p : result.contour) {
+                if (inner.inside(p)) resultInsideInnerCount++;
+                if (!outer.inside(p)) resultOutsideOuterCount++;
+            }
+
+            debugPrintContour(tag + "result", result, 16);
+            System.out.printf(tag + "resultBandCheck insideInnerCount=%d outsideOuterCount=%d%n",
+                    resultInsideInnerCount, resultOutsideOuterCount);
+            System.out.println(tag + "=== DEBUG END ===");
+        }
+
+        return result;
+    }
+
+    private static RayHitIndex buildRayHitIndex(Point2D.Double origin, ShapeContour contour, int samples) {
+        if (origin == null || contour == null || contour.isEmpty() || samples <= 0) {
+            return new RayHitIndex(origin, new Point2D.Double[0]);
+        }
+
+        List<Edge> contourEdges = contour.edges;
+        if (contourEdges == null || contourEdges.isEmpty()) {
+            contourEdges = buildEdges(contour.contour);
+            if (contourEdges.isEmpty()) {
+                return new RayHitIndex(origin, new Point2D.Double[samples]);
+            }
+        }
+
+        final double ox = origin.x;
+        final double oy = origin.y;
+        final double twoPi = Math.PI * 2.0;
+        final double eps = 1.0e-9;
+        final double collinearTol = 1.0e-6;
+
+        final int edgeCount = contourEdges.size();
+
+        double[] ax = new double[edgeCount];
+        double[] ay = new double[edgeCount];
+        double[] sx = new double[edgeCount];
+        double[] sy = new double[edgeCount];
+
+        ArrayList<ArrayList<Integer>> buckets = new ArrayList<>(samples);
+        for (int i = 0; i < samples; i++) {
+            buckets.add(new ArrayList<>());
+        }
+
+        for (int i = 0; i < edgeCount; i++) {
+            Edge e = contourEdges.get(i);
+
+            Point a = e.start;
+            Point b = e.end;
+
+            double axv = a.x;
+            double ayv = a.y;
+            double bxv = b.x;
+            double byv = b.y;
+
+            ax[i] = axv;
+            ay[i] = ayv;
+            sx[i] = bxv - axv;
+            sy[i] = byv - ayv;
+
+            double a0 = normalizeAngle(Math.atan2(ayv - oy, axv - ox));
+            double a1 = normalizeAngle(Math.atan2(byv - oy, bxv - ox));
+
+            if (ccwDelta(a0, a1) > Math.PI) {
+                double tmp = a0;
+                a0 = a1;
+                a1 = tmp;
+            }
+
+            addEdgeToAngularBuckets(buckets, samples, a0, a1, i, twoPi);
+        }
+
+        Point2D.Double[] hits = new Point2D.Double[samples];
+
+        for (int i = 0; i < samples; i++) {
+            double theta = (twoPi * i) / samples;
+            double rx = Math.cos(theta);
+            double ry = Math.sin(theta);
+
+            double bestT = Double.POSITIVE_INFINITY;
+            double bestX = 0.0;
+            double bestY = 0.0;
+            boolean found = false;
+
+            ArrayList<Integer> bucket = buckets.get(i);
+            for (int e : bucket) {
+                double qpx = ax[e] - ox;
+                double qpy = ay[e] - oy;
+                double denom = rx * sy[e] - ry * sx[e];
+
+                if (Math.abs(denom) < eps) {
+                    double ta = qpx * rx + qpy * ry;
+                    double crossA = qpx * ry - qpy * rx;
+                    if (Math.abs(crossA) <= collinearTol && ta >= -eps && ta < bestT) {
+                        bestT = ta;
+                        bestX = ax[e];
+                        bestY = ay[e];
+                        found = true;
+                    }
+
+                    double bx = ax[e] + sx[e];
+                    double by = ay[e] + sy[e];
+                    double pbx = bx - ox;
+                    double pby = by - oy;
+                    double tb = pbx * rx + pby * ry;
+                    double crossB = pbx * ry - pby * rx;
+                    if (Math.abs(crossB) <= collinearTol && tb >= -eps && tb < bestT) {
+                        bestT = tb;
+                        bestX = bx;
+                        bestY = by;
+                        found = true;
+                    }
+                    continue;
+                }
+
+                double t = (qpx * sy[e] - qpy * sx[e]) / denom;
+                if (t < -eps || t >= bestT) {
+                    continue;
+                }
+
+                double u = (qpx * ry - qpy * rx) / denom;
+                if (u >= -eps && u <= 1.0 + eps) {
+                    bestT = t;
+                    bestX = ox + rx * t;
+                    bestY = oy + ry * t;
+                    found = true;
+                }
+            }
+
+            if (found) {
+                hits[i] = new Point2D.Double(bestX, bestY);
+            }
+        }
+
+        return new RayHitIndex(origin, hits);
+    }
+
+    private static void addEdgeToAngularBuckets(
+            ArrayList<ArrayList<Integer>> buckets,
+            int samples,
+            double startAngle,
+            double endAngle,
+            int edgeIndex,
+            double twoPi
+    ) {
+        startAngle = normalizeAngle(startAngle);
+        endAngle = normalizeAngle(endAngle);
+
+        if (endAngle < startAngle) {
+            endAngle += twoPi;
+        }
+
+        int from = (int) Math.floor((startAngle / twoPi) * samples) - 1;
+        int to = (int) Math.ceil((endAngle / twoPi) * samples) + 1;
+
+        for (int k = from; k <= to; k++) {
+            buckets.get(Math.floorMod(k, samples)).add(edgeIndex);
+        }
+    }
+
+    private static Point clampMidpointToBand(
+            Point2D.Double midD,
+            Point2D.Double center,
+            Point2D.Double innerHit,
+            Point2D.Double outerHit,
+            double theta,
+            ShapeContour inner,
+            ShapeContour outer
+    ) {
+        if (midD == null) {
+            return null;
+        }
+
+        double dirX = Math.cos(theta);
+        double dirY = Math.sin(theta);
+
+        if (innerHit == null || outerHit == null) {
+            return new Point(roundInt(midD.x), roundInt(midD.y));
+        }
+
+        double tInner = projectAlongRay(center, dirX, dirY, innerHit.x, innerHit.y);
+        double tOuter = projectAlongRay(center, dirX, dirY, outerHit.x, outerHit.y);
+        double tMid = projectAlongRay(center, dirX, dirY, midD.x, midD.y);
+
+        if (tInner > tOuter) {
+            double tmp = tInner;
+            tInner = tOuter;
+            tOuter = tmp;
+        }
+
+        tMid = bound(tMid, tInner, tOuter);
+
+        Point direct = pointOnRayRounded(center, dirX, dirY, tMid);
+        if (isBandPoint(direct, inner, outer)) {
+            return direct;
+        }
+
+        double span = tOuter - tInner;
+        if (!(span > 0.0)) {
+            return direct;
+        }
+
+        int probes = Math.max(64, Math.min(1024, ceilInt(span * 4.0)));
+        double step = span / probes;
+
+        for (int k = 1; k <= probes; k++) {
+            double delta = k * step;
+
+            double tLo = tMid - delta;
+            if (tLo >= tInner) {
+                Point pLo = pointOnRayRounded(center, dirX, dirY, tLo);
+                if (isBandPoint(pLo, inner, outer)) {
+                    return pLo;
+                }
+            }
+
+            double tHi = tMid + delta;
+            if (tHi <= tOuter) {
+                Point pHi = pointOnRayRounded(center, dirX, dirY, tHi);
+                if (isBandPoint(pHi, inner, outer)) {
+                    return pHi;
+                }
+            }
+        }
+
+        Point best = null;
+        double bestScore = Double.POSITIVE_INFINITY;
+        int coarse = Math.max(16, Math.min(512, ceilInt(span * 2.0)));
+
+        for (int i = 0; i <= coarse; i++) {
+            double t = tInner + (span * i) / coarse;
+            Point p = pointOnRayRounded(center, dirX, dirY, t);
+            if (!isBandPoint(p, inner, outer)) {
+                continue;
+            }
+
+            double score = Math.abs(t - tMid);
+            if (score < bestScore) {
+                bestScore = score;
+                best = p;
+            }
+        }
+
+        return best != null ? best : direct;
+    }
+
+    private static boolean rayContourIntersection(
+            Point2D.Double origin,
+            ShapeContour contour,
+            double rx,
+            double ry,
+            Point2D.Double out
+    ) {
+        if (origin == null || contour == null || contour.isEmpty() || out == null) {
+            return false;
+        }
+
+        final double ox = origin.x;
+        final double oy = origin.y;
+        final double eps = 1.0e-9;
+
+        double bestT = Double.POSITIVE_INFINITY;
+        double bestX = 0.0;
+        double bestY = 0.0;
+        boolean found = false;
+
+        List<Edge> contourEdges = contour.edges;
+        if (contourEdges != null && !contourEdges.isEmpty()) {
+            for (Edge e : contourEdges) {
+                Point a = e.start;
+                Point b = e.end;
+
+                double ax = a.x;
+                double ay = a.y;
+                double sx = b.x - ax;
+                double sy = b.y - ay;
+                double qpx = ax - ox;
+                double qpy = ay - oy;
+
+                double denom = rx * sy - ry * sx;
+
+                if (Math.abs(denom) < eps) {
+                    double ta = qpx * rx + qpy * ry;
+                    double crossA = qpx * ry - qpy * rx;
+                    if (Math.abs(crossA) <= 1.0e-6 && ta >= -eps && ta < bestT) {
+                        bestT = ta;
+                        bestX = ax;
+                        bestY = ay;
+                        found = true;
+                    }
+
+                    double bx = b.x;
+                    double by = b.y;
+                    double pbx = bx - ox;
+                    double pby = by - oy;
+                    double tb = pbx * rx + pby * ry;
+                    double crossB = pbx * ry - pby * rx;
+                    if (Math.abs(crossB) <= 1.0e-6 && tb >= -eps && tb < bestT) {
+                        bestT = tb;
+                        bestX = bx;
+                        bestY = by;
+                        found = true;
+                    }
+                    continue;
+                }
+
+                double t = (qpx * sy - qpy * sx) / denom;
+                double u = (qpx * ry - qpy * rx) / denom;
+
+                if (t >= -eps && u >= -eps && u <= 1.0 + eps && t < bestT) {
+                    bestT = t;
+                    bestX = ox + rx * t;
+                    bestY = oy + ry * t;
+                    found = true;
+                }
+            }
+        } else {
+            List<Point> pts = contour.contour;
+            for (int i = 0, n = pts.size(); i < n; i++) {
+                Point a = pts.get(i);
+                Point b = pts.get((i + 1) % n);
+
+                double ax = a.x;
+                double ay = a.y;
+                double sx = b.x - ax;
+                double sy = b.y - ay;
+                double qpx = ax - ox;
+                double qpy = ay - oy;
+
+                double denom = rx * sy - ry * sx;
+
+                if (Math.abs(denom) < eps) {
+                    double ta = qpx * rx + qpy * ry;
+                    double crossA = qpx * ry - qpy * rx;
+                    if (Math.abs(crossA) <= 1.0e-6 && ta >= -eps && ta < bestT) {
+                        bestT = ta;
+                        bestX = ax;
+                        bestY = ay;
+                        found = true;
+                    }
+
+                    double bx = b.x;
+                    double by = b.y;
+                    double pbx = bx - ox;
+                    double pby = by - oy;
+                    double tb = pbx * rx + pby * ry;
+                    double crossB = pbx * ry - pby * rx;
+                    if (Math.abs(crossB) <= 1.0e-6 && tb >= -eps && tb < bestT) {
+                        bestT = tb;
+                        bestX = bx;
+                        bestY = by;
+                        found = true;
+                    }
+                    continue;
+                }
+
+                double t = (qpx * sy - qpy * sx) / denom;
+                double u = (qpx * ry - qpy * rx) / denom;
+
+                if (t >= -eps && u >= -eps && u <= 1.0 + eps && t < bestT) {
+                    bestT = t;
+                    bestX = ox + rx * t;
+                    bestY = oy + ry * t;
+                    found = true;
+                }
+            }
+        }
+
+        if (!found) {
+            return false;
+        }
+
+        out.x = bestX;
+        out.y = bestY;
+        return true;
+    }
+
+
+    private static Point clampMidpointToBand(
+            double midX,
+            double midY,
+            Point2D.Double center,
+            ShapeContour inner,
+            ShapeContour outer,
+            double dirX,
+            double dirY,
+            Point2D.Double innerHit,
+            Point2D.Double outerHit
+    ) {
+        if (innerHit == null || outerHit == null) {
+            return new Point(roundInt(midX), roundInt(midY));
+        }
+
+        double cx = center.x;
+        double cy = center.y;
+
+        double tInner = (innerHit.x - cx) * dirX + (innerHit.y - cy) * dirY;
+        double tOuter = (outerHit.x - cx) * dirX + (outerHit.y - cy) * dirY;
+        double tMid = (midX - cx) * dirX + (midY - cy) * dirY;
+
+        if (tInner > tOuter) {
+            double tmp = tInner;
+            tInner = tOuter;
+            tOuter = tmp;
+        }
+
+        tMid = bound(tMid, tInner, tOuter);
+
+        Point direct = new Point(
+                roundInt(cx + dirX * tMid),
+                roundInt(cy + dirY * tMid)
+        );
+        if (isBandPoint(direct, inner, outer)) {
+            return direct;
+        }
+
+        double span = tOuter - tInner;
+        if (!(span > 0.0)) {
+            return direct;
+        }
+
+        int probes = Math.max(64, Math.min(1024, ceilInt(span * 4.0)));
+        double step = span / probes;
+
+        for (int k = 1; k <= probes; k++) {
+            double delta = k * step;
+
+            double tLo = tMid - delta;
+            if (tLo >= tInner) {
+                Point pLo = new Point(
+                        roundInt(cx + dirX * tLo),
+                        roundInt(cy + dirY * tLo)
+                );
+                if (isBandPoint(pLo, inner, outer)) {
+                    return pLo;
+                }
+            }
+
+            double tHi = tMid + delta;
+            if (tHi <= tOuter) {
+                Point pHi = new Point(
+                        roundInt(cx + dirX * tHi),
+                        roundInt(cy + dirY * tHi)
+                );
+                if (isBandPoint(pHi, inner, outer)) {
+                    return pHi;
+                }
+            }
+        }
+
+        Point best = null;
+        double bestScore = Double.POSITIVE_INFINITY;
+        int coarse = Math.max(16, Math.min(512, ceilInt(span * 2.0)));
+
+        for (int i = 0; i <= coarse; i++) {
+            double t = tInner + (span * i) / coarse;
+            Point p = new Point(
+                    roundInt(cx + dirX * t),
+                    roundInt(cy + dirY * t)
+            );
+            if (!isBandPoint(p, inner, outer)) {
+                continue;
+            }
+
+            double score = Math.abs(t - tMid);
+            if (score < bestScore) {
+                bestScore = score;
+                best = p;
+            }
+        }
+
+        return best != null ? best : direct;
+    }
+
+    private static final class HalfwayPerimeterCursor {
+        private final List<Point> pts;
+        private final double[] arc;
+        private final int n;
+        private final double perimeter;
+        private final boolean degenerate;
+
+        private int edgeIndex;
+        private double segStart;
+        private double segEnd;
+        private Point a;
+        private Point b;
+        private double dx;
+        private double dy;
+        private double segLen;
+
+        private HalfwayPerimeterCursor(ShapeContour contour) {
+            this.pts = contour.contour;
+            this.arc = contour.cumulativeArcLengths;
+            this.n = pts.size();
+            this.perimeter = contour.perimeter;
+            this.degenerate = (n == 0 || n == 1 || !(perimeter > 0.0));
+
+            if (!degenerate) {
+                loadEdge(0);
+            }
+        }
+
+        private void loadEdge(int idx) {
+            this.edgeIndex = idx;
+            this.segStart = arc[idx];
+            this.segEnd = (idx == n - 1) ? perimeter : arc[idx + 1];
+            this.a = pts.get(idx);
+            this.b = pts.get((idx + 1) % n);
+            this.dx = b.x - a.x;
+            this.dy = b.y - a.y;
+            this.segLen = segEnd - segStart;
+        }
+
+        private void sampleNormalized(double normalized, double[] out) {
+            if (n == 0) {
+                out[0] = 0.0;
+                out[1] = 0.0;
+                return;
+            }
+
+            if (degenerate) {
+                Point p = pts.get(0);
+                out[0] = p.x;
+                out[1] = p.y;
+                return;
+            }
+
+            double target = normalized * perimeter;
+
+            // Match old pointOnPerimeter() behavior:
+            // it chooses the first segment where target <= end.
+            while (edgeIndex < n - 1 && target > segEnd) {
+                loadEdge(edgeIndex + 1);
+            }
+
+            if (segLen <= 0.0) {
+                out[0] = b.x;
+                out[1] = b.y;
+                return;
+            }
+
+            double u = (target - segStart) / segLen;
+            out[0] = a.x + dx * u;
+            out[1] = a.y + dy * u;
+        }
+    }
+
+// Add these helpers inside ShapeContour.
+
+    private ShapeContour halfwayDegenerate(ShapeContour other) {
+        final int sizeA = this.contour.size();
+        final int sizeB = other.contour.size();
+        final int samples = Math.max(sizeA, sizeB);
+
+        if (samples <= 0) return ShapeContour.empty();
+
+        ArrayList<Point> pts = new ArrayList<>(samples);
+
+        for (int i = 0; i < samples; i++) {
+            Point a = this.contour.get((int) (((long) i * sizeA) / samples));
+            Point b = other.contour.get((int) (((long) i * sizeB) / samples));
+
+            final int mx = roundInt((a.x + b.x) * 0.5);
+            final int my = roundInt((a.y + b.y) * 0.5);
+
+            if (pts.isEmpty()) {
+                pts.add(new Point(mx, my));
+            } else {
+                Point last = pts.get(pts.size() - 1);
+                if (last.x != mx || last.y != my) {
+                    pts.add(new Point(mx, my));
+                }
+            }
+        }
+
+        List<Point> normalized = normalizeOrderedLoop(pts);
+        if (normalized.size() < 3) return ShapeContour.empty();
+
+        ShapeContour result = new ShapeContour(new PointCollection());
+        result.finalizeFromOrdered(normalized);
+        return result;
+    }
+
+    private static final class PerimeterCursor {
+        private final List<Point> pts;
+        private final double[] arc;
+        private final int n;
+        private final double perim;
+        private final boolean degenerate;
+
+        private int edge;
+        private double segStart;
+        private double segEnd;
+        private Point a;
+        private Point b;
+        private double dx;
+        private double dy;
+        private double segLen;
+
+        private PerimeterCursor(ShapeContour contour) {
+            this.pts = contour.contour;
+            this.arc = contour.cumulativeArcLengths;
+            this.n = pts.size();
+            this.perim = contour.perimeter;
+            this.degenerate = n == 0 || n == 1 || !(perim > 0.0);
+
+            if (!degenerate) {
+                this.edge = 0;
+                this.segStart = 0.0;
+                this.segEnd = (n == 1) ? 0.0 : arc[1];
+                this.a = pts.get(0);
+                this.b = pts.get(1 % n);
+                this.dx = b.x - a.x;
+                this.dy = b.y - a.y;
+                this.segLen = segEnd - segStart;
+            }
+        }
+
+        private void sample(double target, double[] xy) {
+            if (degenerate) {
+                Point p = pts.isEmpty() ? new Point() : pts.get(0);
+                xy[0] = p.x;
+                xy[1] = p.y;
+                return;
+            }
+
+            while (edge < n - 1 && target > segEnd) {
+                edge++;
+                segStart = arc[edge];
+                segEnd = (edge == n - 1) ? perim : arc[edge + 1];
+                a = pts.get(edge);
+                b = pts.get((edge + 1) % n);
+                dx = b.x - a.x;
+                dy = b.y - a.y;
+                segLen = segEnd - segStart;
+            }
+
+            if (!(segLen > 0.0)) {
+                xy[0] = b.x;
+                xy[1] = b.y;
+                return;
+            }
+
+            double t = (target - segStart) / segLen;
+            xy[0] = a.x + dx * t;
+            xy[1] = a.y + dy * t;
+        }
+    }
+
+    private static Point2D.Double chooseHalfwayCenter(ShapeContour outer, ShapeContour inner) {
+        Point2D.Double c = inner.centroid();
+        Point rounded = new Point(roundInt(c.x), roundInt(c.y));
+        if (isStrictlyInside(inner, rounded)) {
+            return c;
+        }
+
+        Iterator<Point> it = inner.insideIterator();
+        while (it.hasNext()) {
+            Point p = it.next();
+            if (isStrictlyInside(inner, p)) {
+                return new Point2D.Double(p.x, p.y);
+            }
+        }
+
+        if (inner.inside(rounded)) {
+            return c;
+        }
+
+        Point top = inner.topPoint();
+        Point bottom = inner.bottomPoint();
+        Point left = inner.leftPoint();
+        Point right = inner.rightPoint();
+
+        Point[] fallbacks = {
+                top, bottom, left, right,
+                top != null && bottom != null
+                        ? new Point(roundInt((top.x + bottom.x) / 2.0), roundInt((top.y + bottom.y) / 2.0))
+                        : null,
+                left != null && right != null
+                        ? new Point(roundInt((left.x + right.x) / 2.0), roundInt((left.y + right.y) / 2.0))
+                        : null
+        };
+
+        for (Point p : fallbacks) {
+            if (p != null && isStrictlyInside(inner, p)) {
+                return new Point2D.Double(p.x, p.y);
+            }
+        }
+
+        Point2D.Double outerC = outer.centroid();
+        return new Point2D.Double(outerC.x, outerC.y);
+    }
+
+    private static Point2D.Double rayContourIntersection(Point2D.Double origin, ShapeContour contour, double theta) {
+        if (origin == null || contour == null || contour.isEmpty()) {
+            return null;
+        }
+
+        double rx = Math.cos(theta);
+        double ry = Math.sin(theta);
+        double bestT = Double.POSITIVE_INFINITY;
+        Point2D.Double best = null;
+        final double eps = 1.0e-9;
+
+        int n = contour.contour.size();
+        for (int i = 0; i < n; i++) {
+            Point a = contour.contour.get(i);
+            Point b = contour.contour.get((i + 1) % n);
+
+            double sx = b.x - a.x;
+            double sy = b.y - a.y;
+            double qpx = a.x - origin.x;
+            double qpy = a.y - origin.y;
+
+            double denom = cross2(rx, ry, sx, sy);
+
+            if (Math.abs(denom) < eps) {
+                double ta = projectAlongRay(origin, rx, ry, a.x, a.y);
+                double tb = projectAlongRay(origin, rx, ry, b.x, b.y);
+
+                if (pointNearRay(origin, rx, ry, a.x, a.y, 1.0e-6) && ta >= -eps && ta < bestT) {
+                    bestT = ta;
+                    best = new Point2D.Double(a.x, a.y);
+                }
+                if (pointNearRay(origin, rx, ry, b.x, b.y, 1.0e-6) && tb >= -eps && tb < bestT) {
+                    bestT = tb;
+                    best = new Point2D.Double(b.x, b.y);
+                }
+                continue;
+            }
+
+            double t = cross2(qpx, qpy, sx, sy) / denom;
+            double u = cross2(qpx, qpy, rx, ry) / denom;
+
+            if (t >= -eps && u >= -eps && u <= 1.0 + eps) {
+                if (t < bestT) {
+                    bestT = t;
+                    best = new Point2D.Double(origin.x + rx * t, origin.y + ry * t);
+                }
+            }
+        }
+
+        return best;
+    }
+
+    private static Point clampMidpointToBand(
+            Point2D.Double midD,
+            Point2D.Double center,
+            ShapeContour inner,
+            ShapeContour outer,
+            double theta
+    ) {
+        if (midD == null) {
+            return null;
+        }
+
+        double dirX = Math.cos(theta);
+        double dirY = Math.sin(theta);
+        Point2D.Double innerHit = rayContourIntersection(center, inner, theta);
+        Point2D.Double outerHit = rayContourIntersection(center, outer, theta);
+
+        if (innerHit == null || outerHit == null) {
+            return new Point(roundInt(midD.x), roundInt(midD.y));
+        }
+
+        double tInner = projectAlongRay(center, dirX, dirY, innerHit.x, innerHit.y);
+        double tOuter = projectAlongRay(center, dirX, dirY, outerHit.x, outerHit.y);
+        double tMid = projectAlongRay(center, dirX, dirY, midD.x, midD.y);
+
+        if (tInner > tOuter) {
+            double tmp = tInner;
+            tInner = tOuter;
+            tOuter = tmp;
+        }
+
+        tMid = bound(tMid, tInner, tOuter);
+
+        Point direct = pointOnRayRounded(center, dirX, dirY, tMid);
+        if (isBandPoint(direct, inner, outer)) {
+            return direct;
+        }
+
+        double span = tOuter - tInner;
+        if (!(span > 0.0)) {
+            return direct;
+        }
+
+        int probes = Math.max(64, Math.min(1024, ceilInt(span * 4.0)));
+        double step = span / probes;
+
+        for (int k = 1; k <= probes; k++) {
+            double delta = k * step;
+
+            double tLo = tMid - delta;
+            if (tLo >= tInner) {
+                Point pLo = pointOnRayRounded(center, dirX, dirY, tLo);
+                if (isBandPoint(pLo, inner, outer)) {
+                    return pLo;
+                }
+            }
+
+            double tHi = tMid + delta;
+            if (tHi <= tOuter) {
+                Point pHi = pointOnRayRounded(center, dirX, dirY, tHi);
+                if (isBandPoint(pHi, inner, outer)) {
+                    return pHi;
+                }
+            }
+        }
+
+        Point best = null;
+        double bestScore = Double.POSITIVE_INFINITY;
+        int coarse = Math.max(16, Math.min(512, ceilInt(span * 2.0)));
+
+        for (int i = 0; i <= coarse; i++) {
+            double t = tInner + (span * i) / coarse;
+            Point p = pointOnRayRounded(center, dirX, dirY, t);
+            if (!isBandPoint(p, inner, outer)) {
+                continue;
+            }
+
+            double score = Math.abs(t - tMid);
+            if (score < bestScore) {
+                bestScore = score;
+                best = p;
+            }
+        }
+
+        return best != null ? best : direct;
+    }
+
+    private static boolean isStrictlyInside(ShapeContour contour, Point p) {
+        if (contour == null || p == null) {
+            return false;
+        }
+        return contour.inside(p) && !pointOnContour(contour, p);
+    }
+
+    private static boolean pointOnContour(ShapeContour contour, Point p) {
+        if (contour == null || p == null || contour.contour.isEmpty()) {
+            return false;
+        }
+
+        int n = contour.contour.size();
+        for (int i = 0; i < n; i++) {
+            Point a = contour.contour.get(i);
+            Point b = contour.contour.get((i + 1) % n);
+            if (pointOnSegment(p, a, b)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isBandPoint(Point p, ShapeContour inner, ShapeContour outer) {
+        return p != null && outer.inside(p) && !inner.inside(p);
+    }
+
+    private static Point pointOnRayRounded(Point2D.Double origin, double dirX, double dirY, double t) {
+        return new Point(
+                roundInt(origin.x + dirX * t),
+                roundInt(origin.y + dirY * t)
+        );
+    }
+
+    private static double cross2(double ax, double ay, double bx, double by) {
+        return ax * by - ay * bx;
+    }
+
+    private static double projectAlongRay(Point2D.Double origin, double dirX, double dirY, double x, double y) {
+        return (x - origin.x) * dirX + (y - origin.y) * dirY;
+    }
+
+    private static boolean pointNearRay(
+            Point2D.Double origin,
+            double dirX,
+            double dirY,
+            double x,
+            double y,
+            double tolerance
+    ) {
+        double px = x - origin.x;
+        double py = y - origin.y;
+
+        if (Math.abs(cross2(px, py, dirX, dirY)) > tolerance) {
+            return false;
+        }
+
+        return px * dirX + py * dirY >= -tolerance;
+    }
+
+    private static List<Point2D.Double> samplePerimeter(ShapeContour contour, int samples) {
+        List<Point2D.Double> out = new ArrayList<>(samples);
+        for (int i = 0; i < samples; i++) {
+            double t = (double) i / samples;
+            Point2D.Double p = contour.pointOnPerimeterNormalized(t);
+            if (p != null) {
+                out.add(new Point2D.Double(p.x, p.y));
+            }
+        }
+        return out;
+    }
+
+    private static List<Point2D.Double> reverseSamples(List<Point2D.Double> samples) {
+        List<Point2D.Double> out = new ArrayList<>(samples.size());
+        for (int i = samples.size() - 1; i >= 0; i--) {
+            Point2D.Double p = samples.get(i);
+            out.add(new Point2D.Double(p.x, p.y));
+        }
+        return out;
+    }
+
+    private static int findBestCircularShift(List<Point2D.Double> fixed, List<Point2D.Double> moving) {
+        int n = Math.min(fixed.size(), moving.size());
+        if (n == 0) return 0;
+
+        int bestShift = 0;
+        double bestSumSq = Double.POSITIVE_INFINITY;
+
+        for (int shift = 0; shift < n; shift++) {
+            double sumSq = 0.0;
+
+            for (int i = 0; i < n; i++) {
+                Point2D.Double a = fixed.get(i);
+                Point2D.Double b = moving.get((i + shift) % n);
+
+                double dx = a.x - b.x;
+                double dy = a.y - b.y;
+                sumSq += dx * dx + dy * dy;
+
+                if (sumSq >= bestSumSq) {
+                    break;
+                }
+            }
+
+            if (sumSq < bestSumSq) {
+                bestSumSq = sumSq;
+                bestShift = shift;
+            }
+        }
+
+        return bestShift;
+    }
+
+    private static double computeShiftRmse(List<Point2D.Double> fixed, List<Point2D.Double> moving, int shift) {
+        int n = Math.min(fixed.size(), moving.size());
+        if (n == 0) return Double.POSITIVE_INFINITY;
+
+        double sumSq = 0.0;
+        for (int i = 0; i < n; i++) {
+            Point2D.Double a = fixed.get(i);
+            Point2D.Double b = moving.get((i + shift) % n);
+            double dx = a.x - b.x;
+            double dy = a.y - b.y;
+            sumSq += dx * dx + dy * dy;
+        }
+
+        return Math.sqrt(sumSq / n);
+    }
+
+    private static List<Point> normalizeOrderedLoop(List<Point> points) {
+        if (points == null || points.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<Point> out = points.stream()
+                .map(Point::new)
+                .collect(Collectors.toCollection(ArrayList::new));
+
+        if (out.size() >= 2 && samePoint(out.get(0), out.get(out.size() - 1))) {
+            out.remove(out.size() - 1);
+        }
+
+        dedupeSpikes(out);
+
+        int w = 0;
+        for (int i = 0; i < out.size(); i++) {
+            Point p = out.get(i);
+            if (w == 0 || !samePoint(out.get(w - 1), p)) {
+                out.set(w++, p);
+            }
+        }
+        while (out.size() > w) {
+            out.remove(out.size() - 1);
+        }
+
+        if (out.size() >= 2 && samePoint(out.get(0), out.get(out.size() - 1))) {
+            out.remove(out.size() - 1);
+        }
+
+        if (out.size() < 3) {
+            return Collections.emptyList();
+        }
+
+        if (signedArea(out) < 0.0) {
+            Collections.reverse(out);
+        }
+
+        int idx = 0;
+        for (int i = 1; i < out.size(); i++) {
+            Point a = out.get(idx);
+            Point b = out.get(i);
+            if (b.y > a.y || (b.y == a.y && b.x < a.x)) {
+                idx = i;
+            }
+        }
+
+        if (idx > 0) {
+            Collections.rotate(out, -idx);
+        }
+
+        return out;
+    }
+
+    private static boolean samePoint(Point a, Point b) {
+        return a != null && b != null && a.x == b.x && a.y == b.y;
+    }
+
+    private static void debugPrintContour(String label, ShapeContour contour, int limit) {
+        if (contour == null) {
+            System.out.println(label + " = null");
+            return;
+        }
+
+        System.out.printf(
+                "%s size=%d perimeter=%.4f area=%.4f ccw=%s top=%s bottom=%s left=%s right=%s%n",
+                label,
+                contour.size(),
+                contour.perimeter(),
+                contour.area(),
+                contour.isCounterClockwise(),
+                contour.topPoint(),
+                contour.bottomPoint(),
+                contour.leftPoint(),
+                contour.rightPoint()
+        );
+
+        int n = Math.min(limit, contour.size());
+        for (int i = 0; i < n; i++) {
+            Point p = contour.get(i);
+            System.out.printf("%s[%d] = (%d, %d) normArc=%.6f%n",
+                    label, i, p.x, p.y,                contour.normalizedArcLengthTo(i));
+        }
+    }
+
+    private static void debugPrintSamples(String label, List<Point2D.Double> samples, int limit) {
+        if (samples == null) {
+            System.out.println(label + " = null");
+            return;
+        }
+
+        System.out.printf("%s count=%d%n", label, samples.size());
+
+        int n = Math.min(limit, samples.size());
+        for (int i = 0; i < n; i++) {
+            Point2D.Double p = samples.get(i);
+            System.out.printf("%s[%d] = (%.3f, %.3f)%n", label, i, p.x, p.y);
+        }
+    }
+
+    private static void debugPrintPoints(String label, List<Point> points, int limit) {
+        if (points == null) {
+            System.out.println(label + " = null");
+            return;
+        }
+
+        System.out.printf("%s count=%d%n", label, points.size());
+
+        int n = Math.min(limit, points.size());
+        for (int i = 0; i < n; i++) {
+            Point p = points.get(i);
+            System.out.printf("%s[%d] = (%d, %d)%n", label, i, p.x, p.y);
+        }
+    }
+
+    /**
+     * Sample contour along ray from provided centroid at angle-from-top.
+     * Uses contour's radiusAtAngle() but re-centers to 'c' instead of its own centroid.
+     */
+    private static Point2D.Double polarSampleAt(ShapeContour sc, Point2D.Double c, double angleFromTop) {
+        if (sc == null || sc.isEmpty()) return null;
+
+        // sc.radiusAtAngle expects angle-from-top [10]
+        double r = sc.radiusAtAngle(angleFromTop);
+
+        // Convert angle-from-top to raw angle (x-axis) like polarToCartesian does [10]
+        double raw = MathEx.normalizeAngle(angleFromTop + Math.PI / 2.0);
+
+        double x = c.x + Math.cos(raw) * r;
+        double y = c.y + Math.sin(raw) * r;
+        return new Point2D.Double(x, y);
+    }
+
+    private static Point2D.Double pointOnSegmentByArc(ShapeContour sc, int i, double target, double perimeter) {
+        int n = sc.contour.size();
+        if (n == 0) return null;
+
+        double start = sc.cumulativeArcLengths[i];
+        double end = (i == n - 1) ? perimeter : sc.cumulativeArcLengths[i + 1];
+
+        double segLen = end - start;
+        Point a = sc.contour.get(i);
+        Point b = sc.contour.get((i + 1) % n);
+
+        if (segLen <= 1e-12) return new Point2D.Double(b.x, b.y);
+
+        double u = (target - start) / segLen;
+        double x = a.x + (b.x - a.x) * u;
+        double y = a.y + (b.y - a.y) * u;
+        return new Point2D.Double(x, y);
+    }
+
     public Stream<Edge> edgeStream() {
         return edges.stream();
     }
@@ -1195,6 +3159,12 @@ public ShapeContour(PointCollection points) {
 
     public boolean contains(Point point) {
         if (point == null) return false;
+        if (leftPoint != null && rightPoint != null && topPoint != null && bottomPoint != null) {
+            if (point.x < leftPoint.x || point.x > rightPoint.x ||
+                    point.y < bottomPoint.y || point.y > topPoint.y) {
+                return false;
+            }
+        }
         return indexLookup.containsKey(encode(point.x, point.y));
     }
 
@@ -1264,27 +3234,85 @@ public boolean inside(Point point) {
 
     public boolean inside(ShapeContour other) {
         if (other == null || other.isEmpty()) return false;
+        if (this.isEmpty()) return false;
 
-        int minX = Integer.MAX_VALUE;
-        int maxX = Integer.MIN_VALUE;
-        int minY = Integer.MAX_VALUE;
-        int maxY = Integer.MIN_VALUE;
-        for (Point p : other.contour) {
-            if (p.x < minX) minX = p.x;
-            if (p.x > maxX) maxX = p.x;
-            if (p.y < minY) minY = p.y;
-            if (p.y > maxY) maxY = p.y;
-        }
+        // Quick reject by bounding boxes (if other's bbox exceeds this bbox, can't be inside)
+        if (this.leftPoint != null && this.rightPoint != null && this.topPoint != null && this.bottomPoint != null &&
+                other.leftPoint != null && other.rightPoint != null && other.topPoint != null && other.bottomPoint != null) {
 
-        for (int y = minY; y <= maxY; y++) {
-            for (int x = minX; x <= maxX; x++) {
-                Point candidate = new Point(x, y);
-                if (other.inside(candidate) && !inside(candidate)) {
-                    return false;
-                }
+            if (other.leftPoint.x < this.leftPoint.x || other.rightPoint.x > this.rightPoint.x ||
+                    other.bottomPoint.y < this.bottomPoint.y || other.topPoint.y > this.topPoint.y) {
+                return false;
             }
         }
-        return true;
+
+        // 1) If any edges intersect, other is not fully inside this.
+        // (Touching can be treated as inside by allowing endpoint/collinear touches.)
+        if (edgesIntersect(other)) return false;
+
+        // 2) With no intersections, checking one point is enough for containment.
+        // Use a vertex of other; inside(Point) counts "on contour" as inside [10].
+        Point witness = other.contour.get(0);
+        return this.inside(witness);
+    }
+
+    private boolean edgesIntersect(ShapeContour other) {
+        // Iterate over prebuilt edges [10]
+        List<Edge> a = this.edges;
+        List<Edge> b = other.edges;
+        if (a == null || b == null || a.isEmpty() || b.isEmpty()) return false;
+
+        for (Edge edge : a) {
+            Point a1 = edge.start;
+            Point a2 = edge.end;
+            for (Edge value : b) {
+                Point b1 = value.start;
+                Point b2 = value.end;
+                if (segmentsProperlyIntersectOrCross(a1, a2, b1, b2)) return true;
+            }
+        }
+        return false;
+    }
+
+    // Returns true if segments cross in a way that breaks containment.
+// Allows touching at endpoints / collinear overlaps to be treated as "not breaking" containment.
+    private static boolean segmentsProperlyIntersectOrCross(Point p1, Point p2, Point q1, Point q2) {
+        // Fast bounding-box reject
+        if (Math.max(p1.x, p2.x) < Math.min(q1.x, q2.x) ||
+                Math.max(q1.x, q2.x) < Math.min(p1.x, p2.x) ||
+                Math.max(p1.y, p2.y) < Math.min(q1.y, q2.y) ||
+                Math.max(q1.y, q2.y) < Math.min(p1.y, p2.y)) {
+            return false;
+        }
+
+        long o1 = orient(p1, p2, q1);
+        long o2 = orient(p1, p2, q2);
+        long o3 = orient(q1, q2, p1);
+        long o4 = orient(q1, q2, p2);
+
+        // Proper crossing
+        if ((o1 > 0 && o2 < 0 || o1 < 0 && o2 > 0) &&
+                (o3 > 0 && o4 < 0 || o3 < 0 && o4 > 0)) {
+            return true;
+        }
+
+        // Collinear/touching cases: treat as NOT an intersection that breaks containment.
+        // If you want "touching means not inside", change these to `return true`.
+        if (o1 == 0 && onSegment(p1, p2, q1)) return false;
+        if (o2 == 0 && onSegment(p1, p2, q2)) return false;
+        if (o3 == 0 && onSegment(q1, q2, p1)) return false;
+        if (o4 == 0 && onSegment(q1, q2, p2)) return false;
+
+        return false;
+    }
+
+    private static long orient(Point a, Point b, Point c) {
+        return (long)(b.x - a.x) * (c.y - a.y) - (long)(b.y - a.y) * (c.x - a.x);
+    }
+
+    private static boolean onSegment(Point a, Point b, Point p) {
+        return p.x >= Math.min(a.x, b.x) && p.x <= Math.max(a.x, b.x) &&
+                p.y >= Math.min(a.y, b.y) && p.y <= Math.max(a.y, b.y);
     }
 
 
@@ -1406,8 +3434,8 @@ public boolean inside(Point point) {
         rightPoint = right;
 
         NavigableSet<Integer> xs = new TreeSet<>();
-        for (int i = 0; i < ordered.size(); i++) {
-            xs.add(ordered.get(i).x);
+        for (Point point : ordered) {
+            xs.add(point.x);
         }
         xSet = Collections.unmodifiableNavigableSet(xs);
 
@@ -1697,6 +3725,11 @@ public boolean inside(Point point) {
         if (index < 0 || index >= contour.size()) {
             throw new IndexOutOfBoundsException("Index " + index + " out of bounds for length " + contour.size());
         }
+    }
+
+    private static boolean colContainsY(IntList ys, int y) {
+        if (ys == null || ys.isEmpty()) return false;
+        return ys.contains(y);
     }
 
     private static final class ContourVertex {
