@@ -37,5 +37,9 @@ public class GraphicsEx {
         drawLine(g, l, Color.BLACK);
     }
 
+    public static String toHex(Color color) {
+        return String.format("#%02X%02X%02X", color.getRed(), color.getGreen(), color.getBlue());
+    }
+
 }
 

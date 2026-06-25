@@ -3,6 +3,7 @@ package com.elijahsarte.celtools.mainex;
 import com.elijahsarte.celtools.main.framefactory.FastRGB;
 import com.elijahsarte.celtools.main.framefactory.ImageHandler;
 import com.elijahsarte.celtools.main.selectionui.FreeformSelectionManager;
+import com.elijahsarte.celtools.main.selectionui.FreeformSelectionWindow;
 import com.elijahsarte.celtools.main.util.ProgrammingEx;
 import com.elijahsarte.celtools.main.util.geomex.Line;
 import com.elijahsarte.celtools.main.util.geomex.Polygon;
@@ -12,20 +13,23 @@ import com.elijahsarte.celtools.main.util.structures.collections.point.PointColl
 import com.elijahsarte.celtools.main.util.structures.shape.ShapeContour;
 
 import javax.imageio.ImageIO;
+import javax.swing.*;
 import java.awt.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.geom.AffineTransform;
+import java.awt.geom.Line2D;
 import java.awt.geom.Path2D;
 import java.awt.geom.Point2D;
 import java.awt.image.BufferedImage;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.List;
 import java.util.*;
+import java.util.List;
 import java.util.function.Predicate;
 
 import static com.elijahsarte.celtools.main.util.GraphicsEx.*;
-
 
 // todo: make it only run when debug mode is on (and not debug java)
 public class DebuggerEx {
@@ -59,6 +63,7 @@ public class DebuggerEx {
     private static final Color CONTOUR_INFO_COLOR = Color.DARK_GRAY;
     private static final Color GUIDE_BOX_COLOR = new Color(189, 189, 189);
     private static final int DEFAULT_PADDING = 40;
+
     // === Sparse point labeling config ===
     private static final int LABEL_THRESHOLD = 2; // number of points below which labels appear
     private static final Font LABEL_FONT = new Font("Monospaced", Font.PLAIN, 11);
@@ -66,7 +71,7 @@ public class DebuggerEx {
 
     // Specific classes
     private static final double POLYGON_SCALE = 10d;
-    private static final String EXPORT_DIR_PROPERTY = "C:\\Users\\Other user\\Documents\\celtoolsandbox\\celpaintmergefill\\debug_output";
+    private static final String EXPORT_DIR_PROPERTY = "C:\\Users\\Elijah\\Documents\\celtoolsandbox\\celautoink\\debug_output";
     private static final String DEFAULT_EXPORT_BASENAME = "debug";
     private static final String DEFAULT_VIEW_NAME = "Debugger View";
 
@@ -76,8 +81,13 @@ public class DebuggerEx {
     }
 
     private record LayerHandler(String key, Predicate<Object> predicate, LayerApplier applier) {
-        boolean supports(Object obj) { return predicate.test(obj); }
-        BufferedImage apply(String name, BufferedImage base, Object obj) { return applier.apply(name, base, obj); }
+        boolean supports(Object obj) {
+            return predicate.test(obj);
+        }
+
+        BufferedImage apply(String name, BufferedImage base, Object obj) {
+            return applier.apply(name, base, obj);
+        }
     }
 
     private static final List<LayerHandler> LAYER_ORDER = List.of(
@@ -85,9 +95,21 @@ public class DebuggerEx {
             new LayerHandler("bufferedImage", obj -> obj instanceof BufferedImage, DebuggerEx::layerBufferedImage),
             new LayerHandler("imageHandler", obj -> obj instanceof ImageHandler, DebuggerEx::layerImageHandler),
             new LayerHandler("shapeBounds", obj -> obj instanceof ShapeBounds, DebuggerEx::layerShapeBounds),
+
+            new LayerHandler("shapeContourList",
+                    obj -> obj instanceof List<?> list && list.stream().allMatch(ShapeContour.class::isInstance),
+                    (name, base, obj) -> layerShapeContours(name, base, castShapeContourList(obj))),
+            new LayerHandler("shapeContourArray",
+                    obj -> obj instanceof ShapeContour[],
+                    (name, base, obj) -> layerShapeContours(name, base, Arrays.asList((ShapeContour[]) obj))),
+            new LayerHandler("shapeContourIterable",
+                    obj -> obj instanceof Iterable<?> it && iterableContains(it, ShapeContour.class),
+                    (name, base, obj) -> layerShapeContours(name, base, iterableToShapeContours((Iterable<?>) obj))),
             new LayerHandler("shapeContour", obj -> obj instanceof ShapeContour, DebuggerEx::layerShapeContour),
+
             new LayerHandler("polygon", obj -> obj instanceof Polygon, DebuggerEx::layerPolygon),
             new LayerHandler("rectangle", obj -> obj instanceof Rectangle, DebuggerEx::layerRectangle),
+
             new LayerHandler("pointCollectionList",
                     obj -> obj instanceof List<?> list && list.stream().allMatch(PointCollection.class::isInstance),
                     (name, base, obj) -> layerPointCollections(name, base, castPointCollectionList(obj))),
@@ -114,16 +136,19 @@ public class DebuggerEx {
     public static void vis(String name, Object... items) {
         show(name, render(name, items));
     }
-/*
+
     public static BufferedImage render(String name, Object... items) {
         if (items == null || items.length == 0) return null;
+        Object[] normalizedItems = normalizePointArguments(items);
+        if (normalizedItems.length == 0) return null;
+
         BufferedImage canvas = null;
-        boolean[] processed = new boolean[items.length];
+        boolean[] processed = new boolean[normalizedItems.length];
 
         for (LayerHandler handler : LAYER_ORDER) {
-            for (int i = 0; i < items.length; i++) {
+            for (int i = 0; i < normalizedItems.length; i++) {
                 if (processed[i]) continue;
-                Object item = items[i];
+                Object item = normalizedItems[i];
                 if (item == null) {
                     processed[i] = true;
                     continue;
@@ -134,43 +159,19 @@ public class DebuggerEx {
                 }
             }
         }
+
+        // Label after all drawing is done
+        if (canvas != null) {
+            Graphics2D g = canvas.createGraphics();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            for (Object item : normalizedItems) {
+                annotateIfSparse(g, item, null);
+            }
+            g.dispose();
+        }
+
         return canvas;
-    }*/
-public static BufferedImage render(String name, Object... items) {
-    if (items == null || items.length == 0) return null;
-    Object[] normalizedItems = normalizePointArguments(items);
-    if (normalizedItems.length == 0) return null;
-
-    BufferedImage canvas = null;
-    boolean[] processed = new boolean[normalizedItems.length];
-
-    for (LayerHandler handler : LAYER_ORDER) {
-        for (int i = 0; i < normalizedItems.length; i++) {
-            if (processed[i]) continue;
-            Object item = normalizedItems[i];
-            if (item == null) {
-                processed[i] = true;
-                continue;
-            }
-            if (handler.supports(item)) {
-                canvas = handler.apply(name, canvas, item);
-                processed[i] = true;
-            }
-        }
     }
-
-    // Label after all drawing is done
-    if (canvas != null) {
-        Graphics2D g = canvas.createGraphics();
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        for (Object item : normalizedItems) {
-            annotateIfSparse(g, item, null);
-        }
-        g.dispose();
-    }
-
-    return canvas;
-}
 
     public static BufferedImage render(String name, FastRGB hand, Object pts) {
         Object normalized = normalizePointItem(pts);
@@ -185,7 +186,6 @@ public static BufferedImage render(String name, Object... items) {
                 ? render(name, image)
                 : render(name, new Object[]{image, normalized});
     }
-
 
     public static BufferedImage render(String name, FastRGB hand) {
         if (hand == null) return null;
@@ -221,6 +221,251 @@ public static BufferedImage render(String name, Object... items) {
 
     public static BufferedImage render(String name, ShapeContour contour) {
         return render(name, new Object[]{contour});
+    }
+
+    public static BufferedImage renderContours(String name, List<ShapeContour> contours) {
+        if (contours == null) return null;
+        return render(name, new Object[]{contours});
+    }
+
+    public static BufferedImage renderContours(List<ShapeContour> contours) {
+        return renderContours(DEFAULT_VIEW_NAME, contours);
+    }
+
+    public record SelectionResult(
+            String name,
+            BufferedImage image,
+            List<Rectangle> screenRectangles,
+            List<Rectangle> modelRectangles,
+            List<SelectedItem> items
+    ) {
+        public SelectionResult {
+            screenRectangles = copyRectangles(screenRectangles);
+            modelRectangles = copyRectangles(modelRectangles);
+            items = items == null ? List.of() : List.copyOf(items);
+        }
+
+        public boolean isEmpty() {
+            return items.isEmpty();
+        }
+
+        public List<Object> data() {
+            return items.stream().map(SelectedItem::data).toList();
+        }
+
+        public <T> List<T> data(Class<T> type) {
+            if (type == null) return List.of();
+            return data().stream().filter(type::isInstance).map(type::cast).toList();
+        }
+
+        public List<PointCollection> pointCollections() {
+            return data(PointCollection.class);
+        }
+
+        public List<SelectedShapeBounds> shapeBounds() {
+            return data(SelectedShapeBounds.class);
+        }
+
+        public List<SelectedContour> contours() {
+            return data(SelectedContour.class);
+        }
+
+        public List<SelectedPolygon> polygons() {
+            return data(SelectedPolygon.class);
+        }
+    }
+
+    public record SelectedItem(Object source, Object data) {}
+
+    public record ContourVertexSelection(
+            int index,
+            Point point,
+            double rawAngle,
+            double angleFromTop,
+            double radius,
+            double arcLength,
+            double normalizedArcLength
+    ) {
+        public ContourVertexSelection {
+            point = point == null ? null : new Point(point);
+        }
+    }
+
+    public record SelectedContour(ShapeContour source, List<ContourVertexSelection> vertices) {
+        public SelectedContour {
+            vertices = vertices == null ? List.of() : List.copyOf(vertices);
+        }
+
+        public List<Point> points() {
+            return vertices.stream().map(ContourVertexSelection::point).map(Point::new).toList();
+        }
+
+        public PointCollection toPointCollection() {
+            return new PointCollection(points());
+        }
+    }
+
+    public record SelectedShapeBounds(
+            ShapeBounds source,
+            Map<Integer, List<IntegerBounds>> bounds,
+            PointCollection points
+    ) {
+        public SelectedShapeBounds {
+            bounds = copyBounds(bounds);
+            points = points == null ? new PointCollection() : new PointCollection(points);
+        }
+    }
+
+    public record SelectedPolygon(
+            Polygon source,
+            List<Point> vertices,
+            List<Line> topSegments,
+            List<Line> bottomSegments
+    ) {
+        public SelectedPolygon {
+            vertices = copyPoints(vertices);
+            topSegments = topSegments == null ? List.of() : List.copyOf(topSegments);
+            bottomSegments = bottomSegments == null ? List.of() : List.copyOf(bottomSegments);
+        }
+    }
+
+    private record SelectionTransform(double scale, double shiftX, double shiftY) {
+        private static final SelectionTransform IDENTITY = new SelectionTransform(1.0, 0.0, 0.0);
+
+        Rectangle toModel(Rectangle screenRect) {
+            if (screenRect == null) return new Rectangle();
+            Rectangle r = normalizeRect(screenRect);
+            if (scale == 1.0 && shiftX == 0.0 && shiftY == 0.0) return new Rectangle(r);
+
+            int x1 = (int) Math.floor((r.x - shiftX) / scale);
+            int y1 = (int) Math.floor((r.y - shiftY) / scale);
+            int x2 = (int) Math.ceil((r.x + r.width - shiftX) / scale);
+            int y2 = (int) Math.ceil((r.y + r.height - shiftY) / scale);
+
+            int minX = Math.min(x1, x2);
+            int minY = Math.min(y1, y2);
+            return new Rectangle(minX, minY, Math.abs(x2 - x1), Math.abs(y2 - y1));
+        }
+    }
+
+    public static SelectionResult Select(String name, Object... items) {
+        return select(name, items);
+    }
+
+    public static SelectionResult Select(String name, FastRGB hand, Object pts) {
+        return select(name, hand, pts);
+    }
+
+    public static SelectionResult Select(String name, BufferedImage image, Object pts) {
+        return select(name, image, pts);
+    }
+
+    public static SelectionResult Select(String name, FastRGB hand) {
+        return select(name, hand);
+    }
+
+    public static SelectionResult Select(String name, BufferedImage image) {
+        return select(name, image);
+    }
+
+    public static SelectionResult Select(String name, ImageHandler image) {
+        return select(name, image);
+    }
+
+    public static SelectionResult Select(String name, Polygon poly) {
+        return select(name, poly);
+    }
+
+    public static SelectionResult Select(String name, Rectangle rect) {
+        return select(name, rect);
+    }
+
+    public static SelectionResult Select(String name, PointCollection collection) {
+        return select(name, collection);
+    }
+
+    public static SelectionResult Select(String name, ShapeBounds bounds) {
+        return select(name, bounds);
+    }
+
+    public static SelectionResult Select(String name, ShapeContour contour) {
+        return select(name, contour);
+    }
+
+    public static SelectionResult Select(Object... items) {
+        return Select(DEFAULT_VIEW_NAME, items);
+    }
+
+    public static SelectionResult Select(FastRGB hand, Object pts) {
+        return Select(DEFAULT_VIEW_NAME, hand, pts);
+    }
+
+    public static SelectionResult Select(BufferedImage image, Object pts) {
+        return Select(DEFAULT_VIEW_NAME, image, pts);
+    }
+
+    public static SelectionResult Select(FastRGB hand) {
+        return Select(DEFAULT_VIEW_NAME, hand);
+    }
+
+    public static SelectionResult Select(BufferedImage image) {
+        return Select(DEFAULT_VIEW_NAME, image);
+    }
+
+    public static SelectionResult Select(ImageHandler image) {
+        return Select(DEFAULT_VIEW_NAME, image);
+    }
+
+    public static SelectionResult Select(Polygon poly) {
+        return Select(DEFAULT_VIEW_NAME, poly);
+    }
+
+    public static SelectionResult Select(Rectangle rect) {
+        return Select(DEFAULT_VIEW_NAME, rect);
+    }
+
+    public static SelectionResult Select(PointCollection collection) {
+        return Select(DEFAULT_VIEW_NAME, collection);
+    }
+
+    public static SelectionResult Select(ShapeBounds bounds) {
+        return Select(DEFAULT_VIEW_NAME, bounds);
+    }
+
+    public static SelectionResult Select(ShapeContour contour) {
+        return Select(DEFAULT_VIEW_NAME, contour);
+    }
+
+    public static SelectionResult SelectM(String name, FastRGB hand, Object givenPts) {
+        return Select(name, hand, givenPts);
+    }
+
+    public static SelectionResult SelectM(String name, BufferedImage image, Object pts) {
+        return Select(name, image, pts);
+    }
+
+    public static SelectionResult SelectM(FastRGB hand, Object givenPts) {
+        return SelectM(DEFAULT_VIEW_NAME, hand, givenPts);
+    }
+
+    public static SelectionResult SelectM(BufferedImage image, Object pts) {
+        return SelectM(DEFAULT_VIEW_NAME, image, pts);
+    }
+
+    public static SelectionResult SelectM(String name, List<PointCollection> collections) {
+        return Select(name, collections);
+    }
+
+    public static SelectionResult SelectM(List<PointCollection> collections) {
+        return SelectM(DEFAULT_VIEW_NAME, collections);
+    }
+
+    public static SelectionResult SelectContours(String name, List<ShapeContour> contours) {
+        return contours == null ? new SelectionResult(name, null, List.of(), List.of(), List.of()) : Select(name, contours);
+    }
+
+    public static SelectionResult SelectContours(List<ShapeContour> contours) {
+        return SelectContours(DEFAULT_VIEW_NAME, contours);
     }
 
     private static Object[] normalizePointArguments(Object[] items) {
@@ -287,6 +532,38 @@ public static BufferedImage render(String name, Object... items) {
         return copy;
     }
 
+    @SuppressWarnings("unchecked")
+    private static List<ShapeContour> asShapeContourList(Object obj) {
+        if (obj instanceof List<?> list && list.stream().allMatch(ShapeContour.class::isInstance)) {
+            return (List<ShapeContour>) list;
+        }
+        if (obj instanceof Collection<?> collection && collectionContainsOnlyShapeContours(collection)) {
+            return copyToShapeContourList(collection);
+        }
+        if (obj instanceof ShapeContour[] array) {
+            return Arrays.asList(array);
+        }
+        return null;
+    }
+
+    private static boolean collectionContainsOnlyShapeContours(Collection<?> collection) {
+        if (collection == null) return false;
+        for (Object element : collection) {
+            if (!(element instanceof ShapeContour)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static List<ShapeContour> copyToShapeContourList(Collection<?> collection) {
+        List<ShapeContour> copy = new ArrayList<>(collection.size());
+        for (Object element : collection) {
+            copy.add((ShapeContour) element);
+        }
+        return copy;
+    }
+
     private static PointCollection asPointCollection(Object obj) {
         if (obj instanceof PointCollection pc) return pc;
         if (obj instanceof Collection<?> collection) {
@@ -321,6 +598,9 @@ public static BufferedImage render(String name, Object... items) {
         if (pts instanceof PointCollection[] array) {
             return Arrays.asList(array);
         }
+        if (pts instanceof ShapeContour[] array) {
+            return Arrays.asList(array);
+        }
         if (pts instanceof Point[] pointsArray) {
             return new PointCollection(Arrays.asList(pointsArray));
         }
@@ -331,6 +611,13 @@ public static BufferedImage render(String name, Object... items) {
                 List<PointCollection> list = new ArrayList<>(collection.size());
                 for (Object obj : collection) {
                     if (obj instanceof PointCollection pc) list.add(pc);
+                }
+                return list;
+            }
+            if (first instanceof ShapeContour) {
+                List<ShapeContour> list = new ArrayList<>(collection.size());
+                for (Object obj : collection) {
+                    if (obj instanceof ShapeContour contour) list.add(contour);
                 }
                 return list;
             }
@@ -384,10 +671,6 @@ public static BufferedImage render(String name, Object... items) {
     public static void visM(BufferedImage image, Object pts) {
         visM(DEFAULT_VIEW_NAME, image, pts);
     }
-
-
-
-
 
     // For specific classes
     public static void vis(String name, Polygon poly) {
@@ -452,6 +735,14 @@ public static BufferedImage render(String name, Object... items) {
 
     public static void vis(ShapeContour contour) {
         vis(DEFAULT_VIEW_NAME, contour);
+    }
+
+    public static void visContours(String name, List<ShapeContour> contours) {
+        show(name, renderContours(name, contours));
+    }
+
+    public static void visContours(List<ShapeContour> contours) {
+        visContours(DEFAULT_VIEW_NAME, contours);
     }
 
     public static void visN(String name, Object... items) {
@@ -542,6 +833,14 @@ public static BufferedImage render(String name, Object... items) {
         visN(DEFAULT_VIEW_NAME, contour);
     }
 
+    public static void visContoursN(String name, List<ShapeContour> contours) {
+        showNonBlocking(name, renderContours(name, contours));
+    }
+
+    public static void visContoursN(List<ShapeContour> contours) {
+        visContoursN(DEFAULT_VIEW_NAME, contours);
+    }
+
     public static void export(String name, Object... items) {
         exportImage(name, render(name, items), null);
     }
@@ -630,6 +929,688 @@ public static BufferedImage render(String name, Object... items) {
         export(DEFAULT_VIEW_NAME, contour);
     }
 
+    public static void exportContours(String name, List<ShapeContour> contours) {
+        exportImage(name, renderContours(name, contours), null);
+    }
+
+    public static void exportContours(List<ShapeContour> contours) {
+        exportContours(DEFAULT_VIEW_NAME, contours);
+    }
+
+    private static SelectionResult select(String name, Object... items) {
+        if (items == null || items.length == 0) {
+            return new SelectionResult(name, null, List.of(), List.of(), List.of());
+        }
+
+        BufferedImage image = render(name, items);
+        if (image == null) {
+            return new SelectionResult(name, null, List.of(), List.of(), List.of());
+        }
+
+        List<Rectangle> screenRects = showSelection(name, image);
+        SelectionTransform transform = selectionTransformFor(image, items);
+        List<Rectangle> modelRects = screenRects.stream().map(transform::toModel).toList();
+        List<SelectedItem> selectedItems = collectSelectedItems(items, modelRects);
+
+        return new SelectionResult(name, image, screenRects, modelRects, selectedItems);
+    }
+
+    private static List<Rectangle> showSelection(String name, BufferedImage image) {
+        if (image == null || GraphicsEnvironment.isHeadless()) return List.of();
+
+        final String windowName = (name == null || name.isBlank()) ? DEFAULT_VIEW_NAME : name;
+        final List<Rectangle>[] result = new List[]{List.<Rectangle>of()};
+
+        TaskTracker.pause();
+        try {
+            if (SwingUtilities.isEventDispatchThread()) {
+                SecondaryLoop loop = Toolkit.getDefaultToolkit().getSystemEventQueue().createSecondaryLoop();
+
+                FreeformSelectionManager manager = new FreeformSelectionManager(
+                        image,
+                        windowName,
+                        com.elijahsarte.celtools.main.selectionui.SelectionTransform.empty(),
+                        FreeformSelectionWindow.SelectionMode.MULTI_RECTANGLE
+                );
+
+                Thread waiter = new Thread(() -> {
+                    try {
+                        List<Rectangle> rectangles = manager.getSelectedRectangles();
+                        result[0] = rectangles == null ? List.of() : rectangles;
+                    } catch (Exception ignored) {
+                        result[0] = List.of();
+                    } finally {
+                        loop.exit();
+                    }
+                }, "debuggerex-multi-rectangle-selection");
+                waiter.setDaemon(true);
+                waiter.start();
+                loop.enter();
+            } else {
+                final FreeformSelectionManager[] managerRef = new FreeformSelectionManager[1];
+
+                SwingUtilities.invokeAndWait(() -> managerRef[0] = new FreeformSelectionManager(
+                        image,
+                        windowName,
+                        com.elijahsarte.celtools.main.selectionui.SelectionTransform.empty(),
+                        FreeformSelectionWindow.SelectionMode.MULTI_RECTANGLE
+                ));
+
+                List<Rectangle> rectangles = managerRef[0].getSelectedRectangles();
+                result[0] = rectangles == null ? List.of() : rectangles;
+            }
+        } catch (Exception ignored) {
+            result[0] = List.of();
+        } finally {
+            TaskTracker.resume();
+        }
+
+        return copyRectangles(result[0]);
+    }
+
+    private static SelectionTransform selectionTransformFor(BufferedImage image, Object... items) {
+        if (image == null || items == null || items.length == 0) return SelectionTransform.IDENTITY;
+        Object[] normalized = normalizePointArguments(items);
+
+        for (Object item : normalized) {
+            if (item instanceof FastRGB || item instanceof BufferedImage || item instanceof ImageHandler) {
+                return SelectionTransform.IDENTITY;
+            }
+        }
+
+        for (Object item : normalized) {
+            if (item instanceof ShapeBounds bounds) {
+                return transformForShapeBounds(bounds);
+            }
+        }
+
+        for (Object item : normalized) {
+            List<ShapeContour> contours = asShapeContourList(item);
+            if (contours != null) {
+                return transformForShapeContours(contours);
+            }
+        }
+
+        for (Object item : normalized) {
+            if (item instanceof ShapeContour contour) {
+                return transformForShapeContour(contour);
+            }
+        }
+
+        for (Object item : normalized) {
+            if (item instanceof Polygon poly) {
+                return transformForPolygon(poly);
+            }
+            if (item instanceof Rectangle rect) {
+                Polygon poly = Polygon.of(
+                        new Line(new Point(rect.x, rect.y), new Point(rect.x + rect.width, rect.y)),
+                        new Line(new Point(rect.x, rect.y + rect.height), new Point(rect.x + rect.width, rect.y + rect.height))
+                );
+                return transformForPolygon(poly);
+            }
+        }
+
+        for (Object item : normalized) {
+            List<PointCollection> collections = asPointCollectionList(item);
+            if (collections != null) return transformForPointCollections(collections);
+            PointCollection collection = asPointCollection(item);
+            if (collection != null) return transformForPointCollections(List.of(collection));
+        }
+
+        return SelectionTransform.IDENTITY;
+    }
+
+    private static SelectionTransform transformForShapeBounds(ShapeBounds bounds) {
+        TreeMap<Integer, IntegerBounds> boundsMap = ensureBoundsMap(bounds);
+        if (boundsMap == null || boundsMap.isEmpty()) return SelectionTransform.IDENTITY;
+
+        int minX = boundsMap.firstKey();
+        int maxX = boundsMap.lastKey();
+        int minY = Integer.MAX_VALUE;
+        int maxY = Integer.MIN_VALUE;
+
+        for (IntegerBounds b : boundsMap.values()) {
+            if (b == null) continue;
+            minY = Math.min(minY, b.getLowerBound());
+            maxY = Math.max(maxY, b.getUpperBound());
+        }
+        if (minY == Integer.MAX_VALUE || maxY == Integer.MIN_VALUE) return SelectionTransform.IDENTITY;
+
+        int spanX = Math.max(1, maxX - minX);
+        int spanY = Math.max(1, maxY - minY);
+        double scale = standaloneShapeScale(spanX, spanY);
+        return new SelectionTransform(scale, DEFAULT_PADDING - minX * scale, DEFAULT_PADDING - minY * scale);
+    }
+
+    private static SelectionTransform transformForShapeContour(ShapeContour contour) {
+        if (contour == null || contour.isEmpty()) return SelectionTransform.IDENTITY;
+        List<Point> points = contour.toList();
+        if (points.isEmpty()) return SelectionTransform.IDENTITY;
+
+        int minX = points.stream().mapToInt(p -> p.x).min().orElse(0);
+        int maxX = points.stream().mapToInt(p -> p.x).max().orElse(minX);
+        int minY = points.stream().mapToInt(p -> p.y).min().orElse(0);
+        int maxY = points.stream().mapToInt(p -> p.y).max().orElse(minY);
+
+        int spanX = Math.max(1, maxX - minX);
+        int spanY = Math.max(1, maxY - minY);
+        double scale = standaloneShapeScale(spanX, spanY);
+        return new SelectionTransform(scale, DEFAULT_PADDING - minX * scale, DEFAULT_PADDING - minY * scale);
+    }
+
+    private static SelectionTransform transformForShapeContours(List<ShapeContour> contours) {
+        if (contours == null || contours.isEmpty()) return SelectionTransform.IDENTITY;
+
+        int minX = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        boolean hasPoint = false;
+
+        for (ShapeContour contour : contours) {
+            if (contour == null || contour.isEmpty()) continue;
+            for (Point point : contour.toList()) {
+                hasPoint = true;
+                minX = Math.min(minX, point.x);
+                maxX = Math.max(maxX, point.x);
+                minY = Math.min(minY, point.y);
+                maxY = Math.max(maxY, point.y);
+            }
+        }
+
+        if (!hasPoint) return SelectionTransform.IDENTITY;
+
+        int spanX = Math.max(1, maxX - minX);
+        int spanY = Math.max(1, maxY - minY);
+        double scale = standaloneShapeScale(spanX, spanY);
+        return new SelectionTransform(scale, DEFAULT_PADDING - minX * scale, DEFAULT_PADDING - minY * scale);
+    }
+
+    private static double standaloneShapeScale(int spanX, int spanY) {
+        final int MAX_CANVAS = 760;
+        final double DEFAULT_SCALE = 8.0;
+        final double MAX_SCALE = 32.0;
+        double availableX = MAX_CANVAS - DEFAULT_PADDING * 2.0;
+        double availableY = MAX_CANVAS - DEFAULT_PADDING * 2.0;
+        double scale = Math.min(availableX / Math.max(1, spanX), availableY / Math.max(1, spanY));
+        if (!Double.isFinite(scale) || scale <= 0.0) return DEFAULT_SCALE;
+        return Math.min(MAX_SCALE, scale);
+    }
+
+    private static SelectionTransform transformForPolygon(Polygon poly) {
+        if (poly == null) return SelectionTransform.IDENTITY;
+        poly.cache();
+        int pad = (int) Math.max(Math.max(poly.width(), poly.height()) * POLYGON_SCALE / 10d, 20 * POLYGON_SCALE);
+        return new SelectionTransform(
+                POLYGON_SCALE,
+                pad - poly.leftX() * POLYGON_SCALE,
+                pad - poly.bottomY() * POLYGON_SCALE
+        );
+    }
+
+    private static SelectionTransform transformForPointCollections(List<PointCollection> collections) {
+        if (collections == null || collections.isEmpty()) return SelectionTransform.IDENTITY;
+
+        int minX = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE;
+        int minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
+        boolean hasPoint = false;
+
+        for (PointCollection pc : collections) {
+            if (pc == null) continue;
+            for (Point p : pc) {
+                hasPoint = true;
+                minX = Math.min(minX, p.x);
+                maxX = Math.max(maxX, p.x);
+                minY = Math.min(minY, p.y);
+                maxY = Math.max(maxY, p.y);
+            }
+        }
+        if (!hasPoint) return SelectionTransform.IDENTITY;
+
+        int rangeX = maxX - minX;
+        int rangeY = maxY - minY;
+        if (rangeX == 0 && rangeY == 0) return SelectionTransform.IDENTITY;
+
+        final int MAX_IMG_SIZE = 1000;
+        int limX = Math.max(1, rangeX);
+        int limY = Math.max(1, rangeY);
+        double scale = Math.min(
+                (double) (MAX_IMG_SIZE - 2 * 4 - 2 * 10) / limX,
+                (double) (MAX_IMG_SIZE - 2 * 4 - 2 * 10) / limY) * 0.9;
+        return new SelectionTransform(scale, 4 - minX * scale, 4 - minY * scale);
+    }
+
+    private static List<SelectedItem> collectSelectedItems(Object[] items, List<Rectangle> rects) {
+        if (items == null || rects == null || rects.isEmpty()) return List.of();
+        Object[] normalized = normalizePointArguments(items);
+        List<SelectedItem> selected = new ArrayList<>();
+
+        for (Object item : normalized) {
+            if (item == null || item instanceof FastRGB || item instanceof BufferedImage || item instanceof ImageHandler) {
+                continue;
+            }
+
+            if (item instanceof ShapeBounds bounds) {
+                SelectedShapeBounds data = selectShapeBounds(bounds, rects);
+                if (!data.points().isEmpty()) selected.add(new SelectedItem(bounds, data));
+                continue;
+            }
+
+            List<ShapeContour> contourList = asShapeContourList(item);
+            if (contourList != null) {
+                for (ShapeContour contour : contourList) {
+                    SelectedContour data = selectShapeContour(contour, rects);
+                    if (!data.vertices().isEmpty()) selected.add(new SelectedItem(contour, data));
+                }
+                continue;
+            }
+
+            if (item instanceof ShapeContour contour) {
+                SelectedContour data = selectShapeContour(contour, rects);
+                if (!data.vertices().isEmpty()) selected.add(new SelectedItem(contour, data));
+                continue;
+            }
+
+            if (item instanceof Polygon poly) {
+                SelectedPolygon data = selectPolygon(poly, rects);
+                if (!data.vertices().isEmpty() || !data.topSegments().isEmpty() || !data.bottomSegments().isEmpty()) {
+                    selected.add(new SelectedItem(poly, data));
+                }
+                continue;
+            }
+
+            if (item instanceof Rectangle rect) {
+                List<Rectangle> intersections = selectRectangle(rect, rects);
+                if (!intersections.isEmpty()) selected.add(new SelectedItem(rect, intersections));
+                continue;
+            }
+
+            List<PointCollection> collections = asPointCollectionList(item);
+            if (collections != null) {
+                for (PointCollection pc : collections) {
+                    PointCollection selectedPoints = selectPointCollection(pc, rects);
+                    if (!selectedPoints.isEmpty()) selected.add(new SelectedItem(pc, selectedPoints));
+                }
+                continue;
+            }
+
+            PointCollection pc = asPointCollection(item);
+            if (pc != null) {
+                PointCollection selectedPoints = selectPointCollection(pc, rects);
+                if (!selectedPoints.isEmpty()) selected.add(new SelectedItem(item, selectedPoints));
+            }
+        }
+
+        return selected;
+    }
+
+    private static PointCollection selectPointCollection(PointCollection collection, List<Rectangle> rects) {
+        PointCollection selected = new PointCollection();
+        if (collection == null || rects == null || rects.isEmpty()) return selected;
+        for (Point p : collection) {
+            if (insideAny(rects, p)) selected.add(p);
+        }
+        return selected;
+    }
+
+    private static SelectedContour selectShapeContour(ShapeContour contour, List<Rectangle> rects) {
+        if (contour == null || contour.isEmpty() || rects == null || rects.isEmpty()) {
+            return new SelectedContour(contour, List.of());
+        }
+
+        List<ContourVertexSelection> vertices = new ArrayList<>();
+        for (int i = 0; i < contour.size(); i++) {
+            Point p = contour.get(i);
+            if (!insideAny(rects, p)) continue;
+            vertices.add(new ContourVertexSelection(
+                    i,
+                    p,
+                    contour.rawAngle(i),
+                    contour.angleFromTop(i),
+                    contour.radius(i),
+                    contour.arcLengthTo(i),
+                    contour.normalizedArcLengthTo(i)
+            ));
+        }
+        return new SelectedContour(contour, vertices);
+    }
+
+    private static SelectedShapeBounds selectShapeBounds(ShapeBounds bounds, List<Rectangle> rects) {
+        TreeMap<Integer, IntegerBounds> boundsMap = ensureBoundsMap(bounds);
+        PointCollection points = new PointCollection();
+        Map<Integer, List<IntegerBounds>> clipped = new TreeMap<>();
+        if (boundsMap == null || boundsMap.isEmpty() || rects == null || rects.isEmpty()) {
+            return new SelectedShapeBounds(bounds, clipped, points);
+        }
+
+        for (Map.Entry<Integer, IntegerBounds> entry : boundsMap.entrySet()) {
+            int x = entry.getKey();
+            IntegerBounds original = entry.getValue();
+            if (original == null) continue;
+
+            List<IntegerBounds> spans = new ArrayList<>();
+            for (Rectangle rect : rects) {
+                Rectangle r = normalizeRect(rect);
+                if (x < r.x || x > r.x + r.width) continue;
+
+                int low = Math.max(original.getLowerBound(), r.y);
+                int high = Math.min(original.getUpperBound(), r.y + r.height);
+                if (low > high) continue;
+
+                IntegerBounds span = new IntegerBounds(low, high);
+                spans.add(span);
+                for (int y = low; y <= high; y++) points.add(new Point(x, y));
+            }
+            if (!spans.isEmpty()) clipped.put(x, mergeBounds(spans));
+        }
+
+        return new SelectedShapeBounds(bounds, clipped, points);
+    }
+
+    private static SelectedPolygon selectPolygon(Polygon poly, List<Rectangle> rects) {
+        if (poly == null || rects == null || rects.isEmpty()) {
+            return new SelectedPolygon(poly, List.of(), List.of(), List.of());
+        }
+
+        List<Point> vertices = uniquePoints(poly.pts().stream().filter(p -> insideAny(rects, p)).toList());
+        List<Line> top = selectPolygonLines(poly.top(), rects);
+        List<Line> bottom = selectPolygonLines(poly.bottom(), rects);
+        return new SelectedPolygon(poly, vertices, top, bottom);
+    }
+
+    private static List<Line> selectPolygonLines(List<Line> lines, List<Rectangle> rects) {
+        if (lines == null || lines.isEmpty()) return List.of();
+        List<Line> selected = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+
+        for (Line line : lines) {
+            for (Rectangle rect : rects) {
+                Line clipped = clipLine(line, normalizeRect(rect));
+                if (clipped == null) continue;
+                String key = clipped.start().x + "," + clipped.start().y + ":" + clipped.end().x + "," + clipped.end().y;
+                if (seen.add(key)) selected.add(clipped);
+            }
+        }
+        return selected;
+    }
+
+    private static List<Rectangle> selectRectangle(Rectangle source, List<Rectangle> rects) {
+        if (source == null || rects == null || rects.isEmpty()) return List.of();
+        Rectangle sourceNorm = normalizeRect(source);
+        List<Rectangle> out = new ArrayList<>();
+        for (Rectangle rect : rects) {
+            Rectangle intersection = sourceNorm.intersection(normalizeRect(rect));
+            if (intersection.width >= 0 && intersection.height >= 0 && !intersection.isEmpty()) {
+                out.add(intersection);
+            }
+        }
+        return copyRectangles(out);
+    }
+
+    private static Line clipLine(Line line, Rectangle rect) {
+        if (line == null || rect == null) return null;
+        double x0 = line.start().x;
+        double y0 = line.start().y;
+        double x1 = line.end().x;
+        double y1 = line.end().y;
+        double minX = rect.x;
+        double maxX = rect.x + rect.width;
+        double minY = rect.y;
+        double maxY = rect.y + rect.height;
+
+        if (!new Rectangle(rect).intersectsLine(new Line2D.Double(x0, y0, x1, y1))
+                && !containsInclusive(rect, line.start())
+                && !containsInclusive(rect, line.end())) {
+            return null;
+        }
+
+        double dx = x1 - x0;
+        double dy = y1 - y0;
+        double[] t = {0.0, 1.0};
+
+        if (!clipParam(-dx, x0 - minX, t)) return null;
+        if (!clipParam(dx, maxX - x0, t)) return null;
+        if (!clipParam(-dy, y0 - minY, t)) return null;
+        if (!clipParam(dy, maxY - y0, t)) return null;
+
+        Point start = new Point((int) Math.round(x0 + t[0] * dx), (int) Math.round(y0 + t[0] * dy));
+        Point end = new Point((int) Math.round(x0 + t[1] * dx), (int) Math.round(y0 + t[1] * dy));
+        if (start.equals(end) && !containsInclusive(rect, start)) return null;
+        return new Line(start, end);
+    }
+
+    private static boolean clipParam(double p, double q, double[] t) {
+        if (p == 0.0) return q >= 0.0;
+        double r = q / p;
+        if (p < 0.0) {
+            if (r > t[1]) return false;
+            if (r > t[0]) t[0] = r;
+        } else {
+            if (r < t[0]) return false;
+            if (r < t[1]) t[1] = r;
+        }
+        return true;
+    }
+
+    private static boolean insideAny(List<Rectangle> rects, Point p) {
+        if (p == null || rects == null) return false;
+        for (Rectangle rect : rects) {
+            if (containsInclusive(rect, p)) return true;
+        }
+        return false;
+    }
+
+    private static boolean containsInclusive(Rectangle rect, Point p) {
+        if (rect == null || p == null) return false;
+        Rectangle r = normalizeRect(rect);
+        return p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height;
+    }
+
+    private static Rectangle normalizeRect(Rectangle rect) {
+        if (rect == null) return new Rectangle();
+        int x1 = Math.min(rect.x, rect.x + rect.width);
+        int y1 = Math.min(rect.y, rect.y + rect.height);
+        int x2 = Math.max(rect.x, rect.x + rect.width);
+        int y2 = Math.max(rect.y, rect.y + rect.height);
+        return new Rectangle(x1, y1, x2 - x1, y2 - y1);
+    }
+
+    private static List<Rectangle> copyRectangles(List<Rectangle> rects) {
+        if (rects == null || rects.isEmpty()) return List.of();
+        return rects.stream().filter(Objects::nonNull).map(Rectangle::new).toList();
+    }
+
+    private static List<Point> copyPoints(List<Point> points) {
+        if (points == null || points.isEmpty()) return List.of();
+        return points.stream().filter(Objects::nonNull).map(Point::new).toList();
+    }
+
+    private static List<Point> uniquePoints(List<Point> points) {
+        if (points == null || points.isEmpty()) return List.of();
+        List<Point> out = new ArrayList<>();
+        Set<Point> seen = new HashSet<>();
+        for (Point point : points) {
+            if (point == null) continue;
+            Point copy = new Point(point);
+            if (seen.add(copy)) out.add(copy);
+        }
+        return out;
+    }
+
+    private static Map<Integer, List<IntegerBounds>> copyBounds(Map<Integer, List<IntegerBounds>> bounds) {
+        if (bounds == null || bounds.isEmpty()) return Map.of();
+        Map<Integer, List<IntegerBounds>> out = new TreeMap<>();
+        bounds.forEach((x, spans) -> {
+            if (x == null || spans == null || spans.isEmpty()) return;
+            out.put(x, spans.stream()
+                    .filter(Objects::nonNull)
+                    .map(b -> new IntegerBounds(b.getLowerBound(), b.getUpperBound()))
+                    .toList());
+        });
+        return Collections.unmodifiableMap(out);
+    }
+
+    private static List<IntegerBounds> mergeBounds(List<IntegerBounds> bounds) {
+        if (bounds == null || bounds.isEmpty()) return List.of();
+        List<IntegerBounds> sorted = bounds.stream()
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparingInt(IntegerBounds::getLowerBound))
+                .toList();
+        if (sorted.isEmpty()) return List.of();
+
+        List<IntegerBounds> merged = new ArrayList<>();
+        int low = sorted.get(0).getLowerBound();
+        int high = sorted.get(0).getUpperBound();
+        for (int i = 1; i < sorted.size(); i++) {
+            IntegerBounds next = sorted.get(i);
+            if (next.getLowerBound() <= high + 1) {
+                high = Math.max(high, next.getUpperBound());
+            } else {
+                merged.add(new IntegerBounds(low, high));
+                low = next.getLowerBound();
+                high = next.getUpperBound();
+            }
+        }
+        merged.add(new IntegerBounds(low, high));
+        return merged;
+    }
+
+    private static final class RectangleSelectionDialog extends JDialog {
+        private final SelectionPanel panel;
+        private boolean saved;
+
+        private RectangleSelectionDialog(String name, BufferedImage image) {
+            super((Frame) null, (name == null || name.isBlank() ? DEFAULT_VIEW_NAME : name) + " Selection", true);
+            this.panel = new SelectionPanel(image);
+
+            JButton save = new JButton("Save Selection");
+            JButton undo = new JButton("Undo");
+            JButton clear = new JButton("Clear");
+            JButton cancel = new JButton("Cancel");
+
+            save.addActionListener(e -> {
+                saved = true;
+                dispose();
+            });
+            undo.addActionListener(e -> panel.undo());
+            clear.addActionListener(e -> panel.clearSelections());
+            cancel.addActionListener(e -> {
+                saved = false;
+                dispose();
+            });
+
+            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+            buttons.add(undo);
+            buttons.add(clear);
+            buttons.add(cancel);
+            buttons.add(save);
+
+            setLayout(new BorderLayout());
+            add(new JScrollPane(panel), BorderLayout.CENTER);
+            add(buttons, BorderLayout.SOUTH);
+            setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+            setSize(Math.min(1100, image.getWidth() + 48), Math.min(850, image.getHeight() + 96));
+            setLocationRelativeTo(null);
+        }
+
+        private List<Rectangle> savedRectangles() {
+            return saved ? panel.rectangles() : List.of();
+        }
+    }
+
+    private static final class SelectionPanel extends JPanel {
+        private final BufferedImage image;
+        private final List<Rectangle> rectangles = new ArrayList<>();
+        private Point dragStart;
+        private Rectangle activeRect;
+
+        private SelectionPanel(BufferedImage image) {
+            this.image = image;
+            setPreferredSize(new Dimension(image.getWidth(), image.getHeight()));
+            setBackground(Color.DARK_GRAY);
+
+            MouseAdapter mouse = new MouseAdapter() {
+                @Override
+                public void mousePressed(MouseEvent e) {
+                    dragStart = clampPoint(e.getPoint());
+                    activeRect = new Rectangle(dragStart);
+                    repaint();
+                }
+
+                @Override
+                public void mouseDragged(MouseEvent e) {
+                    if (dragStart == null) return;
+                    Point current = clampPoint(e.getPoint());
+                    activeRect = rectangleBetween(dragStart, current);
+                    repaint();
+                }
+
+                @Override
+                public void mouseReleased(MouseEvent e) {
+                    if (dragStart == null) return;
+                    Point current = clampPoint(e.getPoint());
+                    Rectangle finished = rectangleBetween(dragStart, current);
+                    if (finished.width > 0 && finished.height > 0) rectangles.add(finished);
+                    dragStart = null;
+                    activeRect = null;
+                    repaint();
+                }
+            };
+            addMouseListener(mouse);
+            addMouseMotionListener(mouse);
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            super.paintComponent(graphics);
+            Graphics2D g = (Graphics2D) graphics.create();
+            g.drawImage(image, 0, 0, null);
+
+            g.setStroke(new BasicStroke(1.5f));
+            for (Rectangle rect : rectangles) drawSelectionRect(g, rect, false);
+            if (activeRect != null) drawSelectionRect(g, activeRect, true);
+            g.dispose();
+        }
+
+        private void drawSelectionRect(Graphics2D g, Rectangle rect, boolean active) {
+            Rectangle r = normalizeRect(rect);
+            Color fill = active ? new Color(255, 193, 7, 64) : new Color(33, 150, 243, 54);
+            Color outline = active ? new Color(255, 143, 0) : new Color(25, 118, 210);
+            g.setColor(fill);
+            g.fillRect(r.x, r.y, r.width, r.height);
+            g.setColor(outline);
+            g.drawRect(r.x, r.y, r.width, r.height);
+        }
+
+        private Point clampPoint(Point point) {
+            int x = Math.max(0, Math.min(point.x, image.getWidth() - 1));
+            int y = Math.max(0, Math.min(point.y, image.getHeight() - 1));
+            return new Point(x, y);
+        }
+
+        private Rectangle rectangleBetween(Point a, Point b) {
+            int x = Math.min(a.x, b.x);
+            int y = Math.min(a.y, b.y);
+            return new Rectangle(x, y, Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+        }
+
+        private List<Rectangle> rectangles() {
+            return copyRectangles(rectangles);
+        }
+
+        private void undo() {
+            if (!rectangles.isEmpty()) {
+                rectangles.remove(rectangles.size() - 1);
+                repaint();
+            }
+        }
+
+        private void clearSelections() {
+            rectangles.clear();
+            repaint();
+        }
+    }
+
     private static void show(String name, BufferedImage image) {
         if (image == null) return;
         TaskTracker.pause();
@@ -640,9 +1621,7 @@ public static BufferedImage render(String name, Object... items) {
     private static void showNonBlocking(String name, BufferedImage image) {
         if (image == null) return;
         TaskTracker.pause();
-        ProgrammingEx.noExcept(() -> {
-            new FreeformSelectionManager(image, name);
-        });
+        ProgrammingEx.noExcept(() -> new FreeformSelectionManager(image, name));
         TaskTracker.resume();
     }
 
@@ -723,6 +1702,18 @@ public static BufferedImage render(String name, Object... items) {
         }
 
         BufferedImage overlay = renderShapeContourOverlay(contour, base.getWidth(), base.getHeight());
+        if (overlay == null) return base;
+        return merge(base, overlay);
+    }
+
+    private static BufferedImage layerShapeContours(String name, BufferedImage base, List<ShapeContour> contours) {
+        if (contours == null || contours.isEmpty()) return base;
+
+        if (base == null) {
+            return renderShapeContours(name, contours);
+        }
+
+        BufferedImage overlay = renderShapeContoursOverlay(contours, base.getWidth(), base.getHeight());
         if (overlay == null) return base;
         return merge(base, overlay);
     }
@@ -809,8 +1800,13 @@ public static BufferedImage render(String name, Object... items) {
         return bi;
     }
 
-    private static void drawShapeBoundsOutline(Graphics2D g, TreeMap<Integer, IntegerBounds> boundsMap,
-                                               double scale, double shiftX, double shiftY) {
+    private static void drawShapeBoundsOutline(
+            Graphics2D g,
+            TreeMap<Integer, IntegerBounds> boundsMap,
+            double scale,
+            double shiftX,
+            double shiftY
+    ) {
         if (g == null || boundsMap == null || boundsMap.isEmpty()) return;
 
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
@@ -926,8 +1922,13 @@ public static BufferedImage render(String name, Object... items) {
         return renderShapeContourInternal(null, contour, false, width, height);
     }
 
-    private static BufferedImage renderShapeContourInternal(String name, ShapeContour contour,
-                                                            boolean standalone, int targetWidth, int targetHeight) {
+    private static BufferedImage renderShapeContourInternal(
+            String name,
+            ShapeContour contour,
+            boolean standalone,
+            int targetWidth,
+            int targetHeight
+    ) {
         if (contour == null || contour.isEmpty()) return null;
 
         List<Point> points = contour.toList();
@@ -1098,6 +2099,184 @@ public static BufferedImage render(String name, Object... items) {
         return bi;
     }
 
+    private static BufferedImage renderShapeContours(String name, List<ShapeContour> contours) {
+        return renderShapeContoursInternal(name, contours, true, 0, 0);
+    }
+
+    private static BufferedImage renderShapeContoursOverlay(List<ShapeContour> contours, int width, int height) {
+        return renderShapeContoursInternal(null, contours, false, width, height);
+    }
+
+    private static BufferedImage renderShapeContoursInternal(
+            String name,
+            List<ShapeContour> contours,
+            boolean standalone,
+            int targetWidth,
+            int targetHeight
+    ) {
+        if (contours == null || contours.isEmpty()) return null;
+
+        List<ShapeContour> validContours = contours.stream()
+                .filter(Objects::nonNull)
+                .filter(c -> !c.isEmpty())
+                .toList();
+        if (validContours.isEmpty()) return null;
+
+        int minX = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int maxY = Integer.MIN_VALUE;
+
+        for (ShapeContour contour : validContours) {
+            for (Point p : contour.toList()) {
+                minX = Math.min(minX, p.x);
+                maxX = Math.max(maxX, p.x);
+                minY = Math.min(minY, p.y);
+                maxY = Math.max(maxY, p.y);
+            }
+        }
+
+        int spanX = Math.max(1, maxX - minX);
+        int spanY = Math.max(1, maxY - minY);
+
+        double scale;
+        double shiftX;
+        double shiftY;
+        int imgW;
+        int imgH;
+
+        if (standalone) {
+            scale = standaloneShapeScale(spanX, spanY);
+            shiftX = DEFAULT_PADDING - minX * scale;
+            shiftY = DEFAULT_PADDING - minY * scale;
+            imgW = Math.max(1, (int) Math.round(spanX * scale) + DEFAULT_PADDING * 2);
+            imgH = Math.max(1, (int) Math.round(spanY * scale) + DEFAULT_PADDING * 2);
+        } else {
+            if (targetWidth <= 0 || targetHeight <= 0) return null;
+            scale = 1.0;
+            shiftX = 0.0;
+            shiftY = 0.0;
+            imgW = targetWidth;
+            imgH = targetHeight;
+        }
+
+        BufferedImage bi = new BufferedImage(imgW, imgH, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g;
+        if (standalone) {
+            g = populateImage(bi, Color.WHITE);
+        } else {
+            g = bi.createGraphics();
+            g.setComposite(AlphaComposite.Clear);
+            g.fillRect(0, 0, imgW, imgH);
+            g.setComposite(AlphaComposite.SrcOver);
+        }
+
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.setFont(new Font("Arial", Font.PLAIN, 12));
+
+        for (int i = 0; i < validContours.size(); i++) {
+            ShapeContour contour = validContours.get(i);
+            Color color = colorIncMap.get(i % colorIncMap.size());
+            drawColoredContour(g, contour, scale, shiftX, shiftY, color, standalone);
+        }
+
+        if (standalone) {
+            g.setColor(CONTOUR_INFO_COLOR);
+            int textY = 18;
+            String displayName = (name == null || name.isBlank()) ? "shape_contours" : name;
+            g.drawString("Contours: " + displayName, 12, textY);
+            textY += 14;
+            g.drawString(String.format(Locale.ROOT, "count=%d  bounds: x[%d,%d]  y[%d,%d]",
+                    validContours.size(), minX, maxX, minY, maxY), 12, textY);
+        }
+
+        g.dispose();
+        return bi;
+    }
+
+    private static void drawColoredContour(
+            Graphics2D g,
+            ShapeContour contour,
+            double scale,
+            double shiftX,
+            double shiftY,
+            Color baseColor,
+            boolean drawGuideBox
+    ) {
+        if (g == null || contour == null || contour.isEmpty()) return;
+
+        List<Point> points = contour.toList();
+        if (points.isEmpty()) return;
+
+        List<Point2D.Double> mapped = new ArrayList<>(points.size());
+        for (Point p : points) {
+            mapped.add(new Point2D.Double(
+                    p.x * scale + shiftX,
+                    p.y * scale + shiftY
+            ));
+        }
+
+        Path2D.Double outline = new Path2D.Double();
+        outline.moveTo(mapped.get(0).x, mapped.get(0).y);
+        for (int i = 1; i < mapped.size(); i++) {
+            Point2D.Double mp = mapped.get(i);
+            outline.lineTo(mp.x, mp.y);
+        }
+        outline.closePath();
+
+        Stroke previousStroke = g.getStroke();
+        Composite previousComposite = g.getComposite();
+        Color previousColor = g.getColor();
+
+        g.setComposite(AlphaComposite.SrcOver);
+        g.setColor(colorWithAlpha(baseColor, 51));
+        g.fill(outline);
+
+        float edgeStroke = (float) Math.max(1.0, scale * 0.18);
+        g.setStroke(new BasicStroke(edgeStroke, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.setColor(baseColor);
+        g.draw(outline);
+
+        int pointRadius = Math.max(2, (int) Math.round(scale * 0.20));
+        Color nodeColor = baseColor.darker();
+        g.setColor(nodeColor);
+        for (Point2D.Double mp : mapped) {
+            int cx = (int) Math.round(mp.x);
+            int cy = (int) Math.round(mp.y);
+            g.fillOval(cx - pointRadius, cy - pointRadius, pointRadius * 2, pointRadius * 2);
+        }
+
+        if (drawGuideBox) {
+            int minX = points.stream().mapToInt(p -> p.x).min().orElse(0);
+            int maxX = points.stream().mapToInt(p -> p.x).max().orElse(minX);
+            int minY = points.stream().mapToInt(p -> p.y).min().orElse(0);
+            int maxY = points.stream().mapToInt(p -> p.y).max().orElse(minY);
+
+            int boxX = (int) Math.round(minX * scale + shiftX);
+            int boxY = (int) Math.round(minY * scale + shiftY);
+            int boxW = (int) Math.round((maxX - minX) * scale);
+            int boxH = (int) Math.round((maxY - minY) * scale);
+
+            g.setColor(colorWithAlpha(baseColor.darker(), 110));
+            if (boxW > 0 && boxH > 0) {
+                g.drawRect(boxX, boxY, boxW, boxH);
+            } else if (boxW == 0 && boxH > 0) {
+                g.drawLine(boxX, boxY, boxX, boxY + boxH);
+            } else if (boxH == 0 && boxW > 0) {
+                g.drawLine(boxX, boxY, boxX + boxW, boxY);
+            }
+        }
+
+        g.setColor(previousColor);
+        g.setStroke(previousStroke);
+        g.setComposite(previousComposite);
+    }
+
+    private static Color colorWithAlpha(Color color, int alpha) {
+        if (color == null) return new Color(0, 0, 0, Math.max(0, Math.min(255, alpha)));
+        return new Color(color.getRed(), color.getGreen(), color.getBlue(), Math.max(0, Math.min(255, alpha)));
+    }
 
     private static BufferedImage renderPolygon(Polygon poly) {
         if (poly == null) return null;
@@ -1184,7 +2363,8 @@ public static BufferedImage render(String name, Object... items) {
             drawLine(
                     g,
                     transformLine(
-                            new Line(com.elijahsarte.celtools.main.util.CollectionsEx.lastElem(top).end(),
+                            new Line(
+                                    com.elijahsarte.celtools.main.util.CollectionsEx.lastElem(top).end(),
                                     com.elijahsarte.celtools.main.util.CollectionsEx.lastElem(bottom).end()),
                             scale,
                             shiftX,
@@ -1263,7 +2443,7 @@ public static BufferedImage render(String name, Object... items) {
 
     /**
      * Annotate small point sets with labels in pixel coordinates.
-     * Works for java.awt.Point, Point[], Collection<Point>, or PointCollection.
+     * Works for java.awt.Point, Point[], Collection<Point>, PointCollection, or ShapeContour.
      */
     @SuppressWarnings("unchecked")
     private static void annotateIfSparse(Graphics2D g, Object obj, AffineTransform worldToScreen) {
@@ -1294,17 +2474,17 @@ public static BufferedImage render(String name, Object... items) {
     private static List<Point> extractPoints(Object obj) {
         if (obj == null) return null;
 
-        // Single Point
         if (obj instanceof Point p) return List.of(p);
 
-        // Array of Points
         if (obj instanceof Point[] arr) return Arrays.asList(arr);
 
-        // Collection<Point>
+        if (obj instanceof ShapeContour contour && !contour.isEmpty()) {
+            return contour.toList();
+        }
+
         if (obj instanceof Collection<?> c && !c.isEmpty() && c.iterator().next() instanceof Point)
             return ((Collection<Point>) c).stream().toList();
 
-        // PointCollection (Iterable<Point>)
         try {
             if (obj.getClass().getSimpleName().equals("PointCollection")) {
                 Iterable<?> it = (Iterable<?>) obj;
@@ -1314,7 +2494,6 @@ public static BufferedImage render(String name, Object... items) {
             }
         } catch (Throwable ignored) {}
 
-        // Try calling points(), toPoints(), or asPoints()
         for (String m : new String[]{"points", "toPoints", "asPoints"}) {
             try {
                 var mm = obj.getClass().getMethod(m);
@@ -1328,10 +2507,16 @@ public static BufferedImage render(String name, Object... items) {
         return null;
     }
 
-
     private static List<PointCollection> castPointCollectionList(Object obj) {
         if (obj instanceof List<?> list) {
             return list.stream().filter(PointCollection.class::isInstance).map(PointCollection.class::cast).toList();
+        }
+        return List.of();
+    }
+
+    private static List<ShapeContour> castShapeContourList(Object obj) {
+        if (obj instanceof List<?> list) {
+            return list.stream().filter(ShapeContour.class::isInstance).map(ShapeContour.class::cast).toList();
         }
         return List.of();
     }
@@ -1351,6 +2536,16 @@ public static BufferedImage render(String name, Object... items) {
         for (Object obj : iterable) {
             if (obj instanceof PointCollection pc) {
                 list.add(pc);
+            }
+        }
+        return list;
+    }
+
+    private static List<ShapeContour> iterableToShapeContours(Iterable<?> iterable) {
+        List<ShapeContour> list = new ArrayList<>();
+        for (Object obj : iterable) {
+            if (obj instanceof ShapeContour contour) {
+                list.add(contour);
             }
         }
         return list;
@@ -1464,8 +2659,20 @@ public static BufferedImage render(String name, Object... items) {
         return bi;
     }
 
-    private static void drawContourMarker(Graphics2D g, Point point, int minX, int minY, double scale, int pad, int radius,
-                                          Color fill, String label, int canvasW, int canvasH, FontMetrics fm) {
+    private static void drawContourMarker(
+            Graphics2D g,
+            Point point,
+            int minX,
+            int minY,
+            double scale,
+            int pad,
+            int radius,
+            Color fill,
+            String label,
+            int canvasW,
+            int canvasH,
+            FontMetrics fm
+    ) {
         if (point == null) return;
         int cx = (int) Math.round(pad + (point.x - minX) * scale);
         int cy = (int) Math.round(pad + (point.y - minY) * scale);
@@ -1492,7 +2699,6 @@ public static BufferedImage render(String name, Object... items) {
         g.drawString(label, textX, textY);
     }
 
-
     public static void visM(String name, List<PointCollection> collections) {
         show(name, renderPointCollections(name, collections));
     }
@@ -1500,13 +2706,4 @@ public static BufferedImage render(String name, Object... items) {
     public static void visM(List<PointCollection> collections) {
         visM(DEFAULT_VIEW_NAME, collections);
     }
-
-
-
-
-
-
-
-
 }
-

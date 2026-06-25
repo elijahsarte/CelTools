@@ -402,6 +402,30 @@ public final class CollectionsEx {
         return (T[]) arr.toArray();
     }
 
+    public static <T> T fill(IntFunction<T> constructor, int size, Object item) {
+        T arr = constructor.apply(size);
+        if (arr instanceof int[] a) {
+            Arrays.fill(a, (Integer) item);
+        } else if (arr instanceof long[] a) {
+            Arrays.fill(a, (Long) item);
+        } else if (arr instanceof double[] a) {
+            Arrays.fill(a, (Double) item);
+        } else if (arr instanceof float[] a) {
+            Arrays.fill(a, (Float) item);
+        } else if (arr instanceof short[] a) {
+            Arrays.fill(a, (Short) item);
+        } else if (arr instanceof byte[] a) {
+            Arrays.fill(a, (Byte) item);
+        } else if (arr instanceof char[] a) {
+            Arrays.fill(a, (Character) item);
+        } else if (arr instanceof boolean[] a) {
+            Arrays.fill(a, (Boolean) item);
+        } else {
+            Arrays.fill((Object[]) arr, item);
+        }
+        return arr;
+    }
+
 
     public static boolean inBetween(List<Double> min, List<Double> max, List<Double> given) {
         return IntStream.range(0, given.size()).allMatch(i -> varOper(given.get(i), (v) -> v > min.get(i) && v < max.get(i)));
@@ -519,11 +543,72 @@ public final class CollectionsEx {
         return list.stream().max(Comparator.comparingDouble(Number::doubleValue)).orElseThrow();
     }
 
+
+    public static <T> T[] of(T[] array, T element) {
+        return varMutate(array, a -> Arrays.fill(a, element));
+    }
+    public static <T> T[] of(T element, int size, IntFunction<T[]> generator) {
+        return of(generator.apply(size), element);
+    }
+    public static boolean[] of(boolean[] array, boolean element) {
+        return varMutate(array, a -> Arrays.fill(a, element));
+    }
+    public static boolean[] of(boolean element, int size) {
+        return of(new boolean[size], element);
+    }
+    public static byte[] of(byte[] array, byte element) {
+        return varMutate(array, a -> Arrays.fill(a, element));
+    }
+    public static byte[] of(byte element, int size) {
+        return of(new byte[size], element);
+    }
+    public static short[] of(short[] array, short element) {
+        return varMutate(array, a -> Arrays.fill(a, element));
+    }
+    public static short[] of(short element, int size) {
+        return of(new short[size], element);
+    }
+    public static char[] of(char[] array, char element) {
+        return varMutate(array, a -> Arrays.fill(a, element));
+    }
+    public static char[] of(char element, int size) {
+        return of(new char[size], element);
+    }
+    public static int[] of(int[] array, int element) {
+        return varMutate(array, a -> Arrays.fill(a, element));
+    }
+    public static int[] of(int element, int size) {
+        return of(new int[size], element);
+    }
+    public static long[] of(long[] array, long element) {
+        return varMutate(array, a -> Arrays.fill(a, element));
+    }
+    public static long[] of(long element, int size) {
+        return of(new long[size], element);
+    }
+    public static float[] of(float[] array, float element) {
+        return varMutate(array, a -> Arrays.fill(a, element));
+    }
+    public static float[] of(float element, int size) {
+        return of(new float[size], element);
+    }
+    public static double[] of(double[] array, double element) {
+        return varMutate(array, a -> Arrays.fill(a, element));
+    }
+    public static double[] of(double element, int size) {
+        return of(new double[size], element);
+    }
+
+
+
     public static <T> List<T> copy(List<T> list) {
         return varMutate(new ArrayList<>(list.size()), out -> copy(out, list));
     }
     public static <T> void copy(List<T> copyTo, List<T> list) {
         for (T t : list) copyTo.add(t == null ? null : ConstructionEx.Clone(t));
+    }
+    public static <T> void copy(List<T> copyTo, List<T> list, Function<T, T> cloner) {
+        for (T t : list) copyTo.add(t == null ? null : cloner.apply(t));
     }
     public static <K, V, M extends Map<K, V>> M copy(M map, Supplier<M> supplier) {
         return ProgrammingEx.varMutate(supplier.get(), newMap -> newMap.putAll(map));
@@ -551,6 +636,68 @@ public final class CollectionsEx {
         }
 
         return -1;
+    }
+
+
+
+    public static <T> T binarySearchBdsElem(
+            List<T> arr,
+            int key,
+            int startIndex,
+            ToIntFunction<T> getLower,
+            ToIntFunction<T> getUpper,
+            BiPredicate<T, Integer> contains
+    ) {
+        int n = arr.size();
+        if (n == 0) return null;
+
+        if (startIndex < 0) startIndex = 0;
+        else if (startIndex >= n) startIndex = n - 1;
+
+        T bds = arr.get(startIndex);
+        if (contains.test(bds, key)) {
+            return bds;
+        }
+
+        int low, high;
+        if (key > getUpper.applyAsInt(bds)) {
+            low  = startIndex + 1;
+            high = n - 1;
+        } else if (key < getLower.applyAsInt(bds)) {
+            low  = 0;
+            high = startIndex - 1;
+        } else {
+            return null;
+        }
+
+        while (low <= high) {
+            int mid = MathEx.midpoint(low, high);
+            T elem = arr.get(mid);
+
+            if (contains.test(elem, key)) {
+                return elem;
+            }
+            if (key > getUpper.applyAsInt(elem)) {
+                low = mid + 1;
+            } else if (key < getLower.applyAsInt(elem)) {
+                high = mid - 1;
+            } else {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    public static IntegerBounds binarySearchBdsElem(List<IntegerBounds> arr, int target, int startIndex) {
+        return binarySearchBdsElem(
+                arr,
+                target,
+                startIndex,
+                IntegerBounds::getLowerBound,
+                IntegerBounds::getUpperBound,
+                IntegerBounds::inBetweenClosed
+        );
     }
 
 
@@ -618,7 +765,22 @@ public final class CollectionsEx {
         return binarySearchBds(arr, target, arr.size() / 2);
     }
 
-    public static int binarySearchLine(List<Line> arr, int target, int startIndex) {
+    public static Line binarySearchLine(List<Line> arr, int target, int startIndex) {
+        return binarySearchBdsElem(
+                arr,
+                target,
+                startIndex,
+                Line::startX,
+                Line::endX,
+                Line::containsX
+        );
+    }
+
+    public static Line binarySearchLine(List<Line> arr, int target) {
+        return binarySearchLine(arr, target, arr.size() / 2);
+    }
+
+    public static int binarySearchLineIdx(List<Line> arr, int target, int startIndex) {
         return binarySearchBds(
                 arr,
                 target,
@@ -629,8 +791,8 @@ public final class CollectionsEx {
         );
     }
 
-    public static int binarySearchLine(List<Line> arr, int target) {
-        return binarySearchLine(arr, target, arr.size() / 2);
+    public static int binarySearchLineIdx(List<Line> arr, int target) {
+        return binarySearchLineIdx(arr, target, arr.size() / 2);
     }
 
 

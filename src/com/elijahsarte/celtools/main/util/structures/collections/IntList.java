@@ -8,8 +8,10 @@ import com.elijahsarte.celtools.main.util.function.blocks.switchloop.SwitchIf;
 import com.elijahsarte.celtools.main.util.function.fnvals.BiTuple;
 import com.elijahsarte.celtools.main.util.structures.bounds.IntegerBounds;
 
+import java.awt.*;
 import java.lang.reflect.Array;
 import java.util.*;
+import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Collector;
@@ -35,6 +37,15 @@ public final class IntList implements List<Integer> {
         this.firstElem = list.firstElem;
         this.lastElem = list.lastElem;
         this.size = list.size;
+    }
+    public IntList(List<IntegerBounds> list) {
+        for (IntegerBounds bds : list) {
+            this.list.add(bds);
+            this.size += bds.getLength();
+        }
+//        CollectionsEx.copy(this.list, list);
+        this.firstElem = list.get(0).getLowerBound();
+        this.lastElem = CollectionsEx.lastElem(list).getUpperBound();
     }
     public IntList(Collection<? extends Integer> list) {
         this(CollectionsEx.toPrimitiveInt(list));
@@ -72,6 +83,12 @@ public final class IntList implements List<Integer> {
         this.lastElem = lastElem;
         this.size = nums.length;
 
+    }
+    public IntList(IntegerBounds initialBd) {
+        this.list.add(initialBd);
+        this.firstElem = initialBd.getLowerBound();
+        this.lastElem = initialBd.getUpperBound();
+        this.size = 1;
     }
 
 
@@ -761,24 +778,48 @@ public final class IntList implements List<Integer> {
             }
         };
     }*/
-@Override
-public Iterator<Integer> iterator() {
-    if (isEmpty()) return Collections.emptyIterator();
 
-    return new Iterator<>() {
-        private int globalIndex = 0; // next index to return (0..size)
+
+    public IntListIterator iterator() {
+        if (isEmpty()) return new IntListIterator(true);
+        return new IntListIterator(false);
+    }
+
+    public class IntListIterator implements Iterator<Integer> {
+        private int globalIndex = 0; // next element index for forward element iteration
         private int bdsIndex = 0;
+        private IntegerBounds bds;
+        private int curr;
+        private int upper;
 
-        private IntegerBounds bds = list.get(0);
-        private int curr = bds.getLowerBound();
-        private int upper = bds.getUpperBound();
+        private int nextBdCursor = 0;
+        private int nextBdGlobalIndex = 0;
+        private int currentBdStartIndex = -1;
 
         private boolean canRemove = false;
         private int lastReturned;
+        private final boolean empty;
+
+        // cached "previous" values from forward traversal
+        private boolean hasPrevElemCache = false;
+        private int prevElemCache;
+
+        private boolean hasPrevBdCache = false;
+        private IntegerBounds prevBdCache;
+        private int prevBdStartIndex = -1;
+
+        public IntListIterator(boolean empty) {
+            this.empty = empty;
+            if (!empty) {
+                this.bds = list.get(0);
+                this.curr = bds.getLowerBound();
+                this.upper = bds.getUpperBound();
+            }
+        }
 
         @Override
         public boolean hasNext() {
-            return globalIndex < IntList.this.size;
+            return !empty && globalIndex < IntList.this.size;
         }
 
         @Override
@@ -786,12 +827,16 @@ public Iterator<Integer> iterator() {
             if (!hasNext()) throw new NoSuchElementException();
 
             final int out = curr;
+
             lastReturned = out;
             canRemove = true;
 
+            // cache for peekPrevious()
+            prevElemCache = out;
+            hasPrevElemCache = true;
+
             globalIndex++;
 
-            // advance within current bounds, otherwise hop to next bounds
             if (curr < upper) {
                 curr++;
             } else {
@@ -805,17 +850,181 @@ public Iterator<Integer> iterator() {
             return out;
         }
 
+        public boolean hasPrevious() {
+            return !empty && globalIndex > 0;
+        }
+
+        public Integer previous() {
+            if (!hasPrevious()) throw new NoSuchElementException();
+
+            globalIndex--;
+            seekToGlobalIndex(globalIndex);
+
+            int out = curr;
+            lastReturned = out;
+            canRemove = true;
+
+            // cache for peekPrevious()
+            prevElemCache = out;
+            hasPrevElemCache = true;
+
+            return out;
+        }
+
+        public Integer peekNext() {
+            if (!hasNext()) throw new NoSuchElementException();
+            return curr;
+        }
+
+        public Integer peekPrevious() {
+            if (!hasPrevElemCache) throw new NoSuchElementException("No previous element has been traversed");
+            return prevElemCache;
+        }
+
+        public boolean hasNextBd() {
+            return raw && nextBdCursor < list.size();
+        }
+
+        public IntegerBounds nextBd() {
+            if (!raw) {
+                throw new IllegalStateException("Cannot access bounds of IntList without raw access enabled");
+            }
+            if (nextBdCursor >= list.size()) {
+                currentBdStartIndex = -1;
+                offRaw();
+                return null;
+            }
+
+            IntegerBounds bd = list.get(nextBdCursor);
+            currentBdStartIndex = nextBdGlobalIndex;
+
+            // cache for peekPreviousBd()
+            prevBdCache = bd;
+            prevBdStartIndex = currentBdStartIndex;
+            hasPrevBdCache = true;
+
+            nextBdCursor++;
+            nextBdGlobalIndex += bd.getLengthInc();
+
+            return bd;
+        }
+
+        public boolean hasPreviousBd() {
+            return raw && !list.isEmpty() && nextBdCursor > 0;
+        }
+
+        public IntegerBounds previousBd() {
+            if (!raw) {
+                throw new IllegalStateException("Cannot access bounds of IntList without raw access enabled");
+            }
+            if (!hasPreviousBd()) {
+                throw new NoSuchElementException();
+            }
+
+            nextBdCursor--;
+            IntegerBounds bd = list.get(nextBdCursor);
+            nextBdGlobalIndex -= bd.getLengthInc();
+            currentBdStartIndex = nextBdGlobalIndex;
+
+            // cache for peekPreviousBd()
+            prevBdCache = bd;
+            prevBdStartIndex = currentBdStartIndex;
+            hasPrevBdCache = true;
+
+            return bd;
+        }
+
+        public IntegerBounds peekNextBd() {
+            if (!raw) {
+                throw new IllegalStateException("Cannot access bounds of IntList without raw access enabled");
+            }
+            if (!hasNextBd()) {
+                throw new NoSuchElementException();
+            }
+            return list.get(nextBdCursor);
+        }
+
+        public IntegerBounds peekPreviousBd() {
+            if (!hasPrevBdCache) throw new NoSuchElementException("No previous bounds have been traversed");
+            return prevBdCache;
+        }
+
+        public boolean hasCurrent() {
+            return canRemove;
+        }
+        public Integer current() {
+            if (!hasCurrent()) {
+                throw new NoSuchElementException("No current element is set");
+            }
+            return lastReturned;
+        }
+
+        public int currentBdStartIndex() {
+            return currentBdStartIndex;
+        }
+
+        public int peekPreviousBdStartIndex() {
+            if (!hasPrevBdCache) throw new NoSuchElementException("No previous bounds have been traversed");
+            return prevBdStartIndex;
+        }
+
         @Override
         public void remove() {
             if (!canRemove) throw new IllegalStateException("next() must be called before remove()");
             canRemove = false;
-
-            // Remove the element that was just returned.
             IntList.this.removeElem(lastReturned);
-
-            // After removal, the "next" element is now at (globalIndex - 1).
             globalIndex--;
             seekToGlobalIndex(globalIndex);
+        }
+
+        public boolean contains(int target) {
+            if (empty || list.isEmpty()) return false;
+
+            if (prevElemCache == target) return true;
+            // If we still have a forward position, use it to decide search direction.
+            if (hasNext()) {
+                int current = peekNext();
+
+                if (current == target) {
+                    return true; // already positioned on target
+                }
+
+                if (target > current) {
+                    // Walk forward until we reach or pass target.
+                    while (hasNext() && peekNext() < target) {
+                        next();
+                    }
+
+                    // If we landed on target, leave iterator positioned there.
+                    if (hasNext() && peekNext() == target) {
+                        return true;
+                    }
+
+                    // We passed target or ran off the end:
+                    // move back to the previous actual element, if any.
+                    if (hasPrevious()) {
+                        previous();
+                    }
+                    return false;
+                }
+            }
+
+            // Either:
+            // 1) target < current forward element, or
+            // 2) we're already at the end and must search backward.
+            while (hasPrevious()) {
+                int prev = previous();
+
+                if (prev == target) {
+                    return true; // positioned on target
+                }
+
+                if (prev < target) {
+                    return false; // positioned on greatest element < target
+                }
+            }
+
+            return false;
         }
 
         private void seekToGlobalIndex(int idx) {
@@ -824,7 +1033,7 @@ public Iterator<Integer> iterator() {
             int offset = 0;
             for (int i = 0; i < list.size(); i++) {
                 IntegerBounds bb = list.get(i);
-                int len = bb.getLengthInc(); // inclusive length
+                int len = bb.getLengthInc();
                 int nextOffset = offset + len;
 
                 if (idx < nextOffset) {
@@ -837,12 +1046,9 @@ public Iterator<Integer> iterator() {
                 offset = nextOffset;
             }
 
-            // idx == size(): position at end (no next element)
             bdsIndex = list.size();
         }
-    };
-}
-
+    }
 
     @Override
     public Object[] toArray() {

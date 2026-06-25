@@ -1,14 +1,17 @@
 package com.elijahsarte.celtools.main.util;
 
-import com.elijahsarte.celtools.main.util.function.fntypes.ThrowableSupplier;
 import com.elijahsarte.celtools.main.util.function.fntypes.ThrowableRunnable;
+import com.elijahsarte.celtools.main.util.function.fntypes.ThrowableSupplier;
 
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.*;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.stream.IntStream;
 
 public final class ProgrammingEx {
@@ -57,6 +60,25 @@ public final class ProgrammingEx {
     public static <T> T noExcept(ThrowableSupplier<T> fn) {
         try { return fn.get(); } catch (Exception e) { return null; }
     }
+    public static Runnable asNoExcept(ThrowableRunnable action) {
+        return () -> { try { action.run(); } catch (Exception ignored) {} };
+    }
+    public static <T> Supplier<T> asNoExcept(ThrowableSupplier<T> fn) {
+        return () -> { try { return fn.get(); } catch (Exception e) { throw new RuntimeException(e); } };
+    }
+    public static void printExcept(ThrowableRunnable action) {
+        try { action.run(); } catch (Exception e) { e.printStackTrace(); }
+    }
+    public static <T> T printExcept(ThrowableSupplier<T> fn) {
+        try { return fn.get(); } catch (Exception e) { e.printStackTrace(); return null; }
+    }
+    public static Runnable asPrintExcept(ThrowableRunnable action) {
+        return () -> { try { action.run(); } catch (Exception e) { e.printStackTrace(); } };
+    }
+    public static <T> Supplier<T> asPrintExcept(ThrowableSupplier<T> fn) {
+        return () -> { try { return fn.get(); } catch (Exception e) { e.printStackTrace(); return null; } };
+    }
+
 
     public static <T, W extends Throwable> T tryCat(ThrowableSupplier<T> valFn, Function<Exception, W> catchFn) throws W{
         try {
@@ -67,6 +89,14 @@ public final class ProgrammingEx {
     }
     public static <T> T tryCat(ThrowableSupplier<T> valFn) throws Exception {
         return valFn.get();
+    }
+
+    public static <T> T tryCatGet(ThrowableSupplier<T> valFn, Function<Exception, T> catchFn) {
+        try {
+            return valFn.get();
+        } catch (Exception ex) {
+            return catchFn.apply(ex);
+        }
     }
 
     public static <T> T safeNull(Supplier<T> fn) {

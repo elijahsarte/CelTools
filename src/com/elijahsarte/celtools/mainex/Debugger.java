@@ -1,31 +1,35 @@
 package com.elijahsarte.celtools.mainex;
 
 import com.elijahsarte.celtools.main.util.ConstructionEx;
+import com.elijahsarte.celtools.main.util.ProgrammingEx;
 
-import java.lang.management.RuntimeMXBean;
-import java.util.*;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.UUID;
 import java.util.function.Supplier;
 
 public class Debugger {
 
-    private static final Map<String, Object> debugVars = new HashMap<>();
+    private static final Map<String, Object> debugVars = new LinkedHashMap<>();
     private static String recentAddedID = "";
     private static boolean manualToggle = false;
     private static Boolean inDebugMode = null;
 
 
-    public static void create(String id, Object obj) {
-        if (!isDebuggerPresent()) return;
+    public static <T> T create(String id, T obj) {
+        if (!isDebuggerPresent()) return obj;
         recentAddedID = id;
-        debugVars.put(id, ConstructionEx.Clone(obj));
+        return ProgrammingEx.varMutate(ConstructionEx.Clone(obj), t -> debugVars.put(id, t));
     }
-    public static void create(Object obj) {
-        create(UUID.randomUUID().toString(), obj);
+    public static <T> T create(T obj) {
+        return create(UUID.randomUUID().toString(), obj);
     }
-    public static void createRef(String id, Object obj) {
-        if (!isDebuggerPresent()) return;
+    public static <T> T createRef(String id, T obj) {
+        if (!isDebuggerPresent()) return obj;
         recentAddedID = id;
         debugVars.put(id, obj);
+        return obj;
     }
     public static void createRef(Object obj) {
         createRef(UUID.randomUUID().toString(), obj);
@@ -65,6 +69,12 @@ public class Debugger {
         return Collections.unmodifiableMap(debugVars);
     }
 
+    public static void clear() {
+        debugVars.clear();
+        recentAddedID = "";
+        System.gc();
+    }
+
     public static void toggle() {
         manualToggle = !manualToggle;
     }
@@ -79,6 +89,8 @@ public class Debugger {
     // https://stackoverflow.com/a/73125047
     private static boolean isDebuggerPresent() {
         if (manualToggle) return false;
+        return true;
+        /*
         if (inDebugMode != null) return inDebugMode;
         // Get ahold of the Java Runtime Environment (JRE) management interface
         RuntimeMXBean runtime = java.lang.management.ManagementFactory.getRuntimeMXBean();
@@ -91,7 +103,7 @@ public class Debugger {
         // We're looking for the string "jdwp".
         boolean jdwpPresent = args.toString().contains("jdwp");
         inDebugMode = jdwpPresent;
-        return jdwpPresent;
+        return jdwpPresent;*/
     }
 
 

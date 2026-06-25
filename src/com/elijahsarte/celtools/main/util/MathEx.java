@@ -306,6 +306,9 @@ public final class MathEx {
     public static int threeDiv(int divisor) {
         return threeDiv((long) divisor);
     }
+    public static int div255(int num) {
+        return (num + (num >> 8) + 1) >> 8;
+    }
     // https://cs.android.com/androidx/platform/frameworks/support/+/androidx-main:compose/ui/ui-util/src/commonMain/kotlin/androidx/compose/ui/util/MathHelpers.kt
     public static float fastCbrt(float x) {
         float estimate = Float.intBitsToFloat(0x2a510554 + threeDiv(Float.floatToRawIntBits(x) & 0x1FFFFFFFFL));
@@ -313,6 +316,7 @@ public final class MathEx {
         estimate -= (estimate - x / (estimate*estimate)) * (0.33333333333333333333333333333333f);
         return estimate;
     }
+
 
     public static double nonZero(double num, double rep) {
         return num == 0 ? rep : num;
@@ -331,6 +335,13 @@ public final class MathEx {
     }
     public static double roundIfThreshold(double num, double mPart, double gPart) {
         return decimalPart(num) >= gPart ? Math.ceil(num) : decimalPart(num) <= mPart ? Math.floor(num) : num;
+    }
+
+    public static boolean between(double x, double min, double max) {
+        return x > min && x < max;
+    }
+    public static boolean betweenClosed(double x, double min, double max) {
+        return x >= min && x <= max;
     }
 
     public static boolean within(double x, double cmp, double percent) {
@@ -435,6 +446,61 @@ public final class MathEx {
     }
 
 
+    public static double lerp(double start, double end, double t) {
+        return start + ((end - start) * t);
+    }
 
+    public static int lerpInt(int start, int end, double t) {
+        return roundInt(lerp((double) start, (double) end, t));
+    }
+
+    public static Point lerp(Point start, Point end, double t) {
+        return new Point(
+                lerpInt(start.x, end.x, t),
+                lerpInt(start.y, end.y, t)
+        );
+    }
+
+    public static double inverseLerp(double start, double end, double value) {
+        if (start == end) return 0.0;
+        return (value - start) / (end - start);
+    }
+
+    public static double remap(double value, double fromStart, double fromEnd, double toStart, double toEnd) {
+        return lerp(toStart, toEnd, inverseLerp(fromStart, fromEnd, value));
+    }
+
+    public static double clamp01(double value) {
+        return bound(value, 0.0, 1.0);
+    }
+
+    public static double projectionFactor(Point p, Point a, Point b) {
+        double dx = b.x - a.x;
+        double dy = b.y - a.y;
+        double lenSq = (dx * dx) + (dy * dy);
+
+        if (lenSq == 0.0) return 0.0;
+
+        return (((p.x - a.x) * dx) + ((p.y - a.y) * dy)) / lenSq;
+    }
+
+    public static Point projectToSegment(Point p, Point a, Point b) {
+        double t = clamp01(projectionFactor(p, a, b));
+        return lerp(a, b, t);
+    }
+
+    public static double distanceToSegment(Point p, Point a, Point b) {
+        Point q = projectToSegment(p, a, b);
+        return Point.distance(p.x, p.y, q.x, q.y);
+    }
+
+
+    public static int clampPercent(double value) {
+        return Math.max(0, Math.min(100, (int) Math.floor(value)));
+    }
+
+    public static int clampPercent(int value) {
+        return Math.max(0, Math.min(100, value));
+    }
 }
 

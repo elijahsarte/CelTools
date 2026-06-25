@@ -10,8 +10,9 @@ import com.elijahsarte.celtools.main.util.structures.collections.IntList;
 import com.elijahsarte.celtools.main.util.structures.collections.lazy.LazyList;
 
 import java.awt.*;
-import java.util.List;
+import java.awt.geom.Point2D;
 import java.util.*;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
@@ -31,6 +32,8 @@ public class PointCollection implements Iterable<Point> {
 
     private EnhancedTreeMap<Integer, IntList> pointMap;
     private final AtomicInteger size = new AtomicInteger(0);
+    private long coordinateSumX;
+    private long coordinateSumY;
 
     private final AtomicReference<Point> leftPoint = new AtomicReference<>(null);
     private final AtomicReference<Point> rightPoint = new AtomicReference<>(null);
@@ -69,10 +72,29 @@ public class PointCollection implements Iterable<Point> {
     public PointCollection(PointCollection ptCollection) {
         this.pointMap = new EnhancedTreeMap<>(ptCollection.pointMap, k -> k, IntList::new);
         this.size.set(ptCollection.size.get());
+        this.coordinateSumX = ptCollection.coordinateSumX;
+        this.coordinateSumY = ptCollection.coordinateSumY;
         this.leftPoint.set(Optional.ofNullable(ptCollection.leftPoint.get()).map(Point::new).orElse(null));
         this.rightPoint.set(Optional.ofNullable(ptCollection.rightPoint.get()).map(Point::new).orElse(null));
         this.topPoint.set(Optional.ofNullable(ptCollection.topPoint.get()).map(Point::new).orElse(null));
         this.bottomPoint.set(Optional.ofNullable(ptCollection.bottomPoint.get()).map(Point::new).orElse(null));
+    }
+
+    public PointCollection(int width, int height) {
+        this.pointMap = new EnhancedTreeMap<>();
+        this.size.set(width * height);
+        this.coordinateSumX = (long) height * width * (width - 1) / 2;
+        this.coordinateSumY = (long) width * height * (height - 1) / 2;
+        this.pointMap = IntStream.range(0, width).boxed().collect(Collectors.toMap(
+                x -> x,
+                x -> new IntList(new IntegerBounds(0, height - 1)),
+                (e, r) -> e,
+                EnhancedTreeMap::new
+        ));
+        this.leftPoint.set(new Point(0, 0));
+        this.rightPoint.set(new Point(width - 1, height - 1));
+        this.topPoint.set(new Point(0, height - 1));
+        this.bottomPoint.set(new Point(width - 1, 0));
     }
 
 
@@ -104,6 +126,27 @@ public class PointCollection implements Iterable<Point> {
     }
     int addSize(int delta) {
         return size.addAndGet(delta);
+    }
+    void recordRemoval(Point point) {
+        size.decrementAndGet();
+        coordinateSumX -= point.x;
+        coordinateSumY -= point.y;
+    }
+    void recordColumnRemoval(int x, IntList ys) {
+        size.addAndGet(-ys.size());
+        coordinateSumX -= (long) x * ys.size();
+        coordinateSumY -= columnYSum(ys);
+    }
+
+    private static long columnYSum(IntList ys) {
+        return ys.stream().mapToLong(Integer::longValue).sum();
+    }
+
+    private void recordColumnDelta(int x, int oldSize, long oldYSum, IntList column) {
+        int added = column.size() - oldSize;
+        size.addAndGet(added);
+        coordinateSumX += (long) x * added;
+        coordinateSumY += columnYSum(column) - oldYSum;
     }
 
     public Point get(int idx) {
@@ -155,6 +198,8 @@ public class PointCollection implements Iterable<Point> {
 
     // Helper: recompute tracked points from scratch (call when a removal may have invalidated tracked points).
     private void recomputeTrackedPoints() {
+        coordinateSumX = 0;
+        coordinateSumY = 0;
         if (pointMap.isEmpty()) {
             leftPoint.set(null);
             rightPoint.set(null);
@@ -184,6 +229,8 @@ public class PointCollection implements Iterable<Point> {
             int x = e.getKey();
             IntList ys = e.getValue();
             if (ys.isEmpty()) continue;
+            coordinateSumX += (long) x * ys.size();
+            coordinateSumY += ys.stream().mapToLong(Integer::longValue).sum();
             int colTop = ys.first();   // highest in this column
             int colBottom = ys.first(); // lowest in this column
 
@@ -304,12 +351,16 @@ public class PointCollection implements Iterable<Point> {
             IntList iL = new IntList(pt.y);
             pointMap.put(pt.x, iL);
             size.incrementAndGet();
+            coordinateSumX += pt.x;
+            coordinateSumY += pt.y;
             // update tracked points using full column
             adjustTrackedPointsForColumn(pt.x, iL);
             return true;
         }
         else if (!ys.add(pt.y)) return false;
         size.incrementAndGet();
+        coordinateSumX += pt.x;
+        coordinateSumY += pt.y;
         // after adding a y to an existing column we can incrementally update tracked points
         adjustTrackedPointsForNewPoint(pt);
         return true;
@@ -321,6 +372,8 @@ public class PointCollection implements Iterable<Point> {
         if (ys.removeElem(pt.y)) {
             if (ys.isEmpty()) pointMap.remove(pt.x);
             size.decrementAndGet();
+            coordinateSumX -= pt.x;
+            coordinateSumY -= pt.y;
             // If removal could affect tracked points, recompute
             removeTrackedPointIfMatches(pt);
             return true;
@@ -332,15 +385,18 @@ public class PointCollection implements Iterable<Point> {
     public boolean addAtX(int x, int... yes) {
         if (yes == null || yes.length == 0) return true;
         if (pointMap.containsKey(x)) {
-            boolean res = pointMap.getHeldV().addAll(yes);
-            if (res) size.addAndGet(yes.length);
+            IntList column = pointMap.getHeldV();
+            int oldSize = column.size();
+            long oldYSum = columnYSum(column);
+            boolean res = column.addAll(yes);
+            recordColumnDelta(x, oldSize, oldYSum, column);
             // column changed; update tracked points for that column
-            adjustTrackedPointsForColumn(x, pointMap.getHeldV());
+            adjustTrackedPointsForColumn(x, column);
             return res;
         } else {
             IntList iL = new IntList(yes);
             pointMap.put(x, iL);
-            size.addAndGet(yes.length);
+            recordColumnDelta(x, 0, 0, iL);
             adjustTrackedPointsForColumn(x, iL);
             return true;
         }
@@ -348,28 +404,35 @@ public class PointCollection implements Iterable<Point> {
     public boolean addAtX(int x, IntList yes) {
         if (yes == null || yes.isEmpty()) return true;
         if (pointMap.containsKey(x)) {
-            boolean res = pointMap.getHeldV().addAll(yes);
-            if (res) size.addAndGet(yes.size());
-            adjustTrackedPointsForColumn(x, pointMap.getHeldV());
+            IntList column = pointMap.getHeldV();
+            int oldSize = column.size();
+            long oldYSum = columnYSum(column);
+            boolean res = column.addAll(yes);
+            recordColumnDelta(x, oldSize, oldYSum, column);
+            adjustTrackedPointsForColumn(x, column);
             return res;
         } else {
             IntList iL = new IntList(yes);
             pointMap.put(x, iL);
-            size.addAndGet(yes.size());
+            recordColumnDelta(x, 0, 0, iL);
             adjustTrackedPointsForColumn(x, iL);
             return true;
         }
     }
     public boolean addAtX(int x, Collection<? extends Integer> yes) {
+        if (yes == null || yes.isEmpty()) return true;
         if (pointMap.containsKey(x)) {
-            boolean res = pointMap.getHeldV().addAll(yes);
-            if (res) size.addAndGet(yes.size());
-            adjustTrackedPointsForColumn(x, pointMap.getHeldV());
+            IntList column = pointMap.getHeldV();
+            int oldSize = column.size();
+            long oldYSum = columnYSum(column);
+            boolean res = column.addAll(yes);
+            recordColumnDelta(x, oldSize, oldYSum, column);
+            adjustTrackedPointsForColumn(x, column);
             return res;
         } else {
             IntList iL = new IntList(yes);
             pointMap.put(x, iL);
-            size.addAndGet(yes.size());
+            recordColumnDelta(x, 0, 0, iL);
             adjustTrackedPointsForColumn(x, iL);
             return true;
         }
@@ -386,9 +449,12 @@ public class PointCollection implements Iterable<Point> {
                 offset += ys.size();
                 continue;
             }
-            boolean res = Objects.nonNull(ys.remove(hereIdx));
+            Integer removedY = ys.remove(hereIdx);
+            boolean res = Objects.nonNull(removedY);
             if (res) {
                 size.decrementAndGet();
+                coordinateSumX -= entry.getKey();
+                coordinateSumY -= removedY;
                 if (ys.isEmpty()) pointMap.remove(entry.getKey());
                 removeYBounds();
             }
@@ -401,6 +467,8 @@ public class PointCollection implements Iterable<Point> {
         if (!pointMap.containsKey(x)) return null;
         IntList removed = pointMap.getHeldV();
         size.addAndGet(-removed.size());
+        coordinateSumX -= (long) x * removed.size();
+        coordinateSumY -= columnYSum(removed);
         pointMap.remove(x);
         removeTrackedColumnIfMatches(x);
         return removed;
@@ -417,6 +485,8 @@ public class PointCollection implements Iterable<Point> {
                 (a, b) -> a,
                 EnhancedTreeMap::new
         ));
+        coordinateSumX += (long) transX * size.get();
+        coordinateSumY += (long) transY * size.get();
         // shift tracked points if present
         Point lp = leftPoint.get(); if (lp != null) leftPoint.set(new Point(lp.x + transX, lp.y + transY));
         Point rp = rightPoint.get(); if (rp != null) rightPoint.set(new Point(rp.x + transX, rp.y + transY));
@@ -778,6 +848,8 @@ public class PointCollection implements Iterable<Point> {
             addAtX(x, ys);
         }
     }*/
+
+    /*
 public void fillHoles() {
     if (isEmpty()) return;
 
@@ -982,7 +1054,156 @@ public void fillHoles() {
 
         addAtX(x, ys);
     }
-}
+}*/
+
+    public void fillHoles() {
+        if (isEmpty()) return;
+
+        final int minX = firstX();
+        final int maxX = lastX();
+        final int minY = bottomY();
+        final int maxY = topY();
+
+        final int startX = minX - 1;
+        final int endX = maxX + 1;
+        final int startY = minY - 1;
+        final int endY = maxY + 1;
+
+        final int width = endX - startX + 1;
+        final int height = endY - startY + 1;
+
+        long cellCountLong = (long) width * (long) height;
+        if (cellCountLong <= 0L || cellCountLong > Integer.MAX_VALUE) return;
+
+        final int cellCount = (int) cellCountLong;
+        final boolean[] solid = new boolean[cellCount];
+        final boolean[] outside = new boolean[cellCount];
+
+        onRaw();
+        PointIterator srcIt = iterator();
+        while (srcIt.hasNext()) {
+            Map.Entry<Integer, IntList> entry = srcIt.nextEntry();
+            int x = entry.getKey();
+            IntList ys = entry.getValue();
+
+            int ix = x - startX;
+            if (ix < 0 || ix >= width || ys == null || ys.isEmpty()) continue;
+
+            final int base = ix * height;
+
+            ys.onRaw();
+            ys.forEachRaw(bounds -> {
+                int fromIy = Math.max(bounds.getLowerBound(), startY) - startY;
+                int toIy = Math.min(bounds.getUpperBound(), endY) - startY;
+
+                if (fromIy <= toIy) {
+                    Arrays.fill(solid, base + fromIy, base + toIy + 1, true);
+                }
+            });
+        }
+
+        int[] qx = new int[cellCount];
+        int[] qy = new int[cellCount];
+        int head = 0;
+        int tail = 0;
+
+        final int maxIx = width - 1;
+        final int maxIy = height - 1;
+
+        for (int ix = 0; ix < width; ix++) {
+            tail = enqueueIfOpen(solid, outside, qx, qy, tail, ix, 0, height);
+            if (maxIy != 0) {
+                tail = enqueueIfOpen(solid, outside, qx, qy, tail, ix, maxIy, height);
+            }
+        }
+
+        for (int iy = 1; iy < maxIy; iy++) {
+            tail = enqueueIfOpen(solid, outside, qx, qy, tail, 0, iy, height);
+            if (maxIx != 0) {
+                tail = enqueueIfOpen(solid, outside, qx, qy, tail, maxIx, iy, height);
+            }
+        }
+
+        while (head < tail) {
+            int cx = qx[head];
+            int cy = qy[head];
+            head++;
+
+            if (cx > 0) {
+                tail = enqueueIfOpen(solid, outside, qx, qy, tail, cx - 1, cy, height);
+                if (cy > 0) tail = enqueueIfOpen(solid, outside, qx, qy, tail, cx - 1, cy - 1, height);
+                if (cy < maxIy) tail = enqueueIfOpen(solid, outside, qx, qy, tail, cx - 1, cy + 1, height);
+            }
+
+            if (cx < maxIx) {
+                tail = enqueueIfOpen(solid, outside, qx, qy, tail, cx + 1, cy, height);
+                if (cy > 0) tail = enqueueIfOpen(solid, outside, qx, qy, tail, cx + 1, cy - 1, height);
+                if (cy < maxIy) tail = enqueueIfOpen(solid, outside, qx, qy, tail, cx + 1, cy + 1, height);
+            }
+
+            if (cy > 0) tail = enqueueIfOpen(solid, outside, qx, qy, tail, cx, cy - 1, height);
+            if (cy < maxIy) tail = enqueueIfOpen(solid, outside, qx, qy, tail, cx, cy + 1, height);
+        }
+
+        final int iyMin = minY - startY;
+        final int iyMax = maxY - startY;
+
+        EnhancedTreeMap<Integer, IntList> rebuilt = new EnhancedTreeMap<>();
+        int rebuiltSize = 0;
+
+        for (int x = minX, ix = minX - startX; x <= maxX; x++, ix++) {
+            final int base = ix * height;
+
+            int count = 0;
+            for (int iy = iyMin; iy <= iyMax; iy++) {
+                int idx = base + iy;
+                if (solid[idx] || !outside[idx]) {
+                    count++;
+                }
+            }
+
+            if (count == 0) continue;
+
+            int[] ys = new int[count];
+            int k = 0;
+
+            for (int iy = iyMin; iy <= iyMax; iy++) {
+                int idx = base + iy;
+                if (solid[idx] || !outside[idx]) {
+                    ys[k++] = startY + iy;
+                }
+            }
+
+            IntList column = new IntList(ys);
+            rebuilt.put(x, column);
+            rebuiltSize += count;
+        }
+
+        this.pointMap = rebuilt;
+        this.size.set(rebuiltSize);
+        recomputeTrackedPoints();
+    }
+
+    private static int enqueueIfOpen(
+            boolean[] solid,
+            boolean[] outside,
+            int[] qx,
+            int[] qy,
+            int tail,
+            int ix,
+            int iy,
+            int height
+    ) {
+        int idx = ix * height + iy;
+        if (solid[idx] || outside[idx]) {
+            return tail;
+        }
+
+        outside[idx] = true;
+        qx[tail] = ix;
+        qy[tail] = iy;
+        return tail + 1;
+    }
 
 
 
@@ -1380,6 +1601,7 @@ public void fillHoles() {
      * This approximates "fillHoles().subtract(outline)" for typical solid shapes, but
      * does not require BFS over the entire bounding box like fillHoles() [11].
      */
+    /*
     public PointCollection hole() {
         PointCollection out = new PointCollection();
         if (isEmpty()) return out;
@@ -1400,6 +1622,49 @@ public void fillHoles() {
             }
         }
         return out;
+    }
+*/
+    public PointCollection hole() {
+        if (isEmpty()) return new PointCollection();
+
+        EnhancedTreeMap<Integer, IntList> outMap = new EnhancedTreeMap<>();
+
+        onRaw();
+        PointIterator xIt = iterator();
+
+        while (xIt.hasNext()) {
+            Map.Entry<Integer, IntList> entry = xIt.nextEntry();
+            int x = entry.getKey();
+            IntList ys = entry.getValue();
+
+            if (ys == null || ys.isEmpty() || ys.size() < 2) continue;
+
+            ys.onRaw();
+            IntList.IntListIterator yIt = ys.iterator();
+            if (!yIt.hasNextBd()) continue;
+
+            List<IntegerBounds> holeBds = new ArrayList<>();
+            IntegerBounds prevBd = yIt.nextBd();
+
+            while (yIt.hasNextBd()) {
+                IntegerBounds nextBd = yIt.nextBd();
+
+                int holeLo = prevBd.getUpperBound() + 1;
+                int holeHi = nextBd.getLowerBound() - 1;
+
+                if (holeLo <= holeHi) {
+                    holeBds.add(new IntegerBounds(holeLo, holeHi));
+                }
+
+                prevBd = nextBd;
+            }
+
+            if (!holeBds.isEmpty()) {
+                outMap.put(x, new IntList(holeBds));
+            }
+        }
+
+        return outMap.isEmpty() ? new PointCollection() : new PointCollection(() -> outMap);
     }
 
 
@@ -1558,6 +1823,19 @@ public void fillHoles() {
         return this.size.get();
     }
 
+    public Point2D.Double mathematicalCentroid() {
+        int pointCount = size.get();
+        return pointCount == 0
+                ? new Point2D.Double()
+                : new Point2D.Double(
+                        (double) coordinateSumX / pointCount,
+                        (double) coordinateSumY / pointCount
+                );
+    }
+    public Point centroid() {
+        return closest(ProgrammingEx.varOper(mathematicalCentroid(), p -> new Point((int) p.x, (int) p.y)));
+    }
+
 
     // Public getters preserved but implemented via tracked Points
 
@@ -1598,6 +1876,42 @@ public void fillHoles() {
     }
     public Rectangle imgRect() {
         return new Rectangle(firstX(), bottomY(), width(), height());
+    }
+
+    public static Rectangle rect(List<PointCollection> collections) {
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE;
+        boolean found = false;
+
+        for (PointCollection pc : collections) {
+            if (pc == null) continue;
+            for (Point p : pc) {
+                if (p == null) continue;
+                found = true;
+                if (p.x < minX) minX = p.x;
+                if (p.y < minY) minY = p.y;
+                if (p.x > maxX) maxX = p.x;
+                if (p.y > maxY) maxY = p.y;
+            }
+        }
+
+        if (!found) throw new IllegalArgumentException("No points in provided collections");
+        return new Rectangle(minX, minY, (maxX - minX) + 1, (maxY - minY) + 1);
+    }
+
+    public static Rectangle imgRect(List<PointCollection> collections) {
+        Rectangle r = rect(collections);
+
+        int x1 = Math.max(0, r.x);
+        int y1 = Math.max(0, r.y);
+        int x2 = r.x + r.width;
+        int y2 = r.y + r.height;
+
+        if (x2 <= x1 || y2 <= y1) {
+            return new Rectangle(0, 0, 0, 0);
+        }
+
+        return new Rectangle(x1, y1, x2 - x1, y2 - y1);
     }
 
     // Expose tracked point accessors if callers want points:
@@ -1743,6 +2057,75 @@ public void fillHoles() {
         }
         if (!raw) throw new IllegalCallerException("Cannot call raw methods when raw access is not enabled");
         offRaw();
+    }
+
+
+    public String toDebugDumpString() {
+        StringBuilder out = new StringBuilder(Math.max(64, size() * 12));
+        out.append("CTPOINTCOLLECTION\t1\n");
+        out.append("SIZE\t").append(size()).append('\n');
+        out.append("COLUMNS\t").append(pointMap.size()).append('\n');
+        for (Map.Entry<Integer, IntList> entry : pointMap.entrySet()) {
+            out.append("X\t").append(entry.getKey()).append('\t');
+            IntList ys = entry.getValue();
+            out.append(ys.size()).append('\t');
+            for (int i = 0; i < ys.size(); i++) {
+                if (i > 0) out.append(',');
+                out.append(ys.get(i));
+            }
+            out.append('\n');
+        }
+        return out.toString();
+    }
+
+    public static PointCollection fromDebugDumpString(String dump) {
+        if (dump == null) {
+            throw new IllegalArgumentException("PointCollection debug dump cannot be null");
+        }
+        String[] lines = dump.split("\\R", -1);
+        if (lines.length == 0 || !"CTPOINTCOLLECTION\t1".equals(lines[0])) {
+            throw new IllegalArgumentException("Not a PointCollection debug dump");
+        }
+
+        int expectedSize = -1;
+        TreeMap<Integer, List<Integer>> decoded = new TreeMap<>();
+
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i];
+            if (line == null || line.isEmpty()) continue;
+            String[] parts = line.split("\\t", 4);
+            if (parts.length == 0) continue;
+            if ("SIZE".equals(parts[0]) && parts.length >= 2) {
+                expectedSize = Integer.parseInt(parts[1]);
+                continue;
+            }
+            if ("COLUMNS".equals(parts[0])) {
+                continue;
+            }
+            if (!"X".equals(parts[0]) || parts.length < 4) {
+                throw new IllegalArgumentException("Malformed PointCollection dump line: " + line);
+            }
+
+            int x = Integer.parseInt(parts[1]);
+            int count = Integer.parseInt(parts[2]);
+            ArrayList<Integer> ys = new ArrayList<>(Math.max(0, count));
+            if (!parts[3].isEmpty()) {
+                String[] nums = parts[3].split(",", -1);
+                for (String num : nums) {
+                    if (!num.isEmpty()) ys.add(Integer.parseInt(num));
+                }
+            }
+            if (ys.size() != count) {
+                throw new IllegalArgumentException("PointCollection dump column " + x + " declared " + count + " points but encoded " + ys.size());
+            }
+            decoded.put(x, ys);
+        }
+
+        PointCollection collection = new PointCollection(decoded);
+        if (expectedSize >= 0 && collection.size() != expectedSize) {
+            throw new IllegalArgumentException("PointCollection dump declared " + expectedSize + " points but decoded " + collection.size());
+        }
+        return collection;
     }
 
 }

@@ -1,10 +1,12 @@
 package com.elijahsarte.celtools.main.util.structures.shape;
 
+import com.elijahsarte.celtools.main.util.CollectionsEx;
 import com.elijahsarte.celtools.main.util.MathEx;
-import com.elijahsarte.celtools.main.util.ProgrammingEx;
+import com.elijahsarte.celtools.main.util.structures.bounds.IntegerBounds;
 import com.elijahsarte.celtools.main.util.structures.bounds.ShapeBounds;
 import com.elijahsarte.celtools.main.util.structures.collections.IntList;
 import com.elijahsarte.celtools.main.util.structures.collections.point.PointCollection;
+import com.elijahsarte.celtools.main.util.structures.collections.point.PointIterator;
 
 import java.awt.*;
 import java.awt.geom.Point2D;
@@ -45,61 +47,47 @@ public class ShapeContour implements Iterable<Point> {
     private List<Edge> edges;
     private NavigableSet<Integer> xSet;
 
-    /**
-    public ShapeContour(PointCollection pointCollection) {
-        this(collectPoints(pointCollection));
-    }*/
-
     public ShapeContour(PointCollection pts) {
         if (pts == null || pts.isEmpty()) {
             initEmpty();
             return;
         }
-/*
-        Set<Long> all = new HashSet<>((int) (pts.size() / 0.75) + 1);
-        pts.onRaw();
-        pts.forEachRaw((x, ys) -> {
-            for (int i = 0, n = ys.size(); i < n; i++) {
-                all.add(MathEx.encode(x, ys.get(i)));
-            }
-        });
-
-        Set<Long> boundary = new HashSet<>((int) (all.size() / 0.75) + 1);
-        pts.forEachRaw((x, ys) -> {
-            for (int i = 0, n = ys.size(); i < n; i++) {
-                int y = ys.get(i);
-                // Fetch neighbor columns once
-                IntList ysL = pts.getYesAtX(x - 1);
-                IntList ysR = pts.getYesAtX(x + 1);
-                // Current column already known as `ys`
-                long code = MathEx.encode(x, y);
-                boolean isBoundary =
-                        !all.contains(MathEx.encode(x - 1, y)) ||
-                                !all.contains(MathEx.encode(x + 1, y)) ||
-                                !all.contains(MathEx.encode(x, y - 1)) ||
-                                !all.contains(MathEx.encode(x, y + 1));
-                if (isBoundary) boundary.add(code);
-            }
-        });*/
 
         Set<Long> boundary = new HashSet<>((int) (pts.size() / 0.75) + 1);
+//        Set<Long> boundary = new HashSet<>(pts.size());
 
         pts.onRaw();
-        pts.forEachRaw((x, ys) -> {
-            // Fetch neighbor columns once
-            List<IntList> ysA = pts.getYesAtXOneFellSwoop(x - 1, x + 1);
-            IntList ysL = ysA.get(0), ysR = ysA.get(1);
-            //IntList ysL = pts.getYesAtX(x - 1);
-            //IntList ysR = pts.getYesAtX(x + 1);
-            // Current column already known as `ys`
-            for (int y : ys) {
-                boolean isBoundary =
-                        !colContainsY(ysL, y) ||
-                                !colContainsY(ysR, y) ||
-                                ProgrammingEx.varOper(ys.contains(y - 1, y + 1), b -> !b[0] || !b[1]);
-                if (isBoundary) boundary.add(MathEx.encode(x, y)); // [4]
+        PointIterator it = pts.iterator();
+
+        while (it.hasNext()) {
+            Map.Entry<Integer, IntList> prevEntry = it.hasPrevious() ? it.peekPreviousEntry() : null;
+            Map.Entry<Integer, IntList> entry = it.nextEntry();
+            Map.Entry<Integer, IntList> nextEntry = it.hasNext() ? it.peekNextEntry() : null;
+
+            int x = entry.getKey();
+            IntList ys = entry.getValue();
+            IntList ysL = (prevEntry != null && prevEntry.getKey() == x - 1) ? prevEntry.getValue() : null;
+            IntList ysR = (nextEntry != null && nextEntry.getKey() == x + 1) ? nextEntry.getValue() : null;
+
+            IntList.IntListIterator yIt = ys.iterator();
+            IntList.IntListIterator ysLIt = ysL != null ? ysL.iterator() : null;
+            IntList.IntListIterator ysRIt = ysR != null ? ysR.iterator() : null;
+
+            while (yIt.hasNext()) {
+                boolean missingPrevY = !yIt.hasPrevious()
+                        || yIt.peekPrevious() != yIt.peekNext() - 1;
+
+                int y = yIt.next();
+
+                boolean missingLeft = ysLIt == null || !ysLIt.contains(y);
+                boolean missingRight = ysRIt == null || !ysRIt.contains(y);
+                boolean missingNextY = !yIt.hasNext() || yIt.peekNext() != y + 1;
+
+                if (missingLeft || missingRight || missingPrevY || missingNextY) {
+                    boundary.add(MathEx.encode(x, y));
+                }
             }
-        });
+        }
 
         if (boundary.isEmpty()) {
             initEmpty();
@@ -137,6 +125,337 @@ public class ShapeContour implements Iterable<Point> {
 
         finalizeFromOrdered(ordered);
     }
+
+    /////////////////
+    ///
+    public ShapeContour(PointCollection pts, int maxBridgeDistance) {
+        this(bridgeByBoundaryBuckets(pts, maxBridgeDistance));
+    }
+
+    private static PointCollection bridgeByBoundaryBuckets(PointCollection pts, int maxBridgeDistance) {
+        if (pts == null || pts.isEmpty() || maxBridgeDistance <= 0) {
+            return pts;
+        }
+
+        final int n = pts.size();
+        final int[] xs = new int[n];
+        final int[] ys = new int[n];
+        final HashMap<Long, Integer> indexOf = new HashMap<>((int) (n / 0.75f) + 1);
+
+        final int[] write = {0};
+        pts.onRaw();
+        pts.forEachRaw((x, col) -> {
+            col.onRaw();
+            col.forEachRaw(run -> {
+                for (int y = run.getLowerBound(); y <= run.getUpperBound(); y++) {
+                    int i = write[0]++;
+                    xs[i] = x;
+                    ys[i] = y;
+                    indexOf.put(enc(x, y), i);
+                }
+            });
+        });
+
+        if (write[0] <= 1) {
+            return pts;
+        }
+
+        final int[] component = new int[n];
+        Arrays.fill(component, -1);
+
+        final ArrayList<IntBag> boundaryByComponent = new ArrayList<>();
+        final int[] queue = new int[n];
+        int componentCount = 0;
+
+        for (int seed = 0; seed < n; seed++) {
+            if (component[seed] != -1) {
+                continue;
+            }
+
+            IntBag boundary = new IntBag(64);
+            int head = 0;
+            int tail = 0;
+            queue[tail++] = seed;
+            component[seed] = componentCount;
+
+            while (head < tail) {
+                int i = queue[head++];
+                int x = xs[i];
+                int y = ys[i];
+
+                if (!indexOf.containsKey(enc(x - 1, y)) ||
+                        !indexOf.containsKey(enc(x + 1, y)) ||
+                        !indexOf.containsKey(enc(x, y - 1)) ||
+                        !indexOf.containsKey(enc(x, y + 1))) {
+                    boundary.add(i);
+                }
+
+                for (int[] d : NEIGHBOR_OFFSETS) {
+                    Integer ni = indexOf.get(enc(x + d[0], y + d[1]));
+                    if (ni != null && component[ni] == -1) {
+                        component[ni] = componentCount;
+                        queue[tail++] = ni;
+                    }
+                }
+            }
+
+            boundaryByComponent.add(boundary);
+            componentCount++;
+        }
+
+        if (componentCount <= 1) {
+            return pts;
+        }
+
+        final int cellSize = Math.max(1, maxBridgeDistance);
+        final int maxDistSq = maxBridgeDistance * maxBridgeDistance;
+
+        final HashMap<Long, IntBag> buckets = new HashMap<>();
+        final IntBag allBoundary = new IntBag(Math.max(64, n >>> 2));
+
+        for (IntBag boundary : boundaryByComponent) {
+            for (int k = 0; k < boundary.size(); k++) {
+                int idx = boundary.get(k);
+                allBoundary.add(idx);
+
+                int bx = Math.floorDiv(xs[idx], cellSize);
+                int by = Math.floorDiv(ys[idx], cellSize);
+                long bucketKey = enc(bx, by);
+
+                IntBag bucket = buckets.get(bucketKey);
+                if (bucket == null) {
+                    bucket = new IntBag(8);
+                    buckets.put(bucketKey, bucket);
+                }
+                bucket.add(idx);
+            }
+        }
+
+        final HashMap<Long, GapBridgeEdge> bestByComponentPair = new HashMap<>();
+
+        for (int p = 0; p < allBoundary.size(); p++) {
+            int i = allBoundary.get(p);
+            int ax = xs[i];
+            int ay = ys[i];
+            int ca = component[i];
+
+            int bcx = Math.floorDiv(ax, cellSize);
+            int bcy = Math.floorDiv(ay, cellSize);
+
+            for (int oy = -1; oy <= 1; oy++) {
+                for (int ox = -1; ox <= 1; ox++) {
+                    IntBag bucket = buckets.get(enc(bcx + ox, bcy + oy));
+                    if (bucket == null) {
+                        continue;
+                    }
+
+                    for (int q = 0; q < bucket.size(); q++) {
+                        int j = bucket.get(q);
+                        if (j <= i) {
+                            continue;
+                        }
+
+                        int cb = component[j];
+                        if (ca == cb) {
+                            continue;
+                        }
+
+                        int dx = xs[j] - ax;
+                        if (dx < -maxBridgeDistance || dx > maxBridgeDistance) {
+                            continue;
+                        }
+
+                        int dy = ys[j] - ay;
+                        if (dy < -maxBridgeDistance || dy > maxBridgeDistance) {
+                            continue;
+                        }
+
+                        int distSq = dx * dx + dy * dy;
+                        if (distSq > maxDistSq) {
+                            continue;
+                        }
+
+                        int c0, c1, x0, y0, x1, y1;
+                        if (ca < cb) {
+                            c0 = ca;
+                            c1 = cb;
+                            x0 = ax;
+                            y0 = ay;
+                            x1 = xs[j];
+                            y1 = ys[j];
+                        } else {
+                            c0 = cb;
+                            c1 = ca;
+                            x0 = xs[j];
+                            y0 = ys[j];
+                            x1 = ax;
+                            y1 = ay;
+                        }
+
+                        long pairKey = (((long) c0) << 32) | (c1 & 0xffffffffL);
+                        GapBridgeEdge prev = bestByComponentPair.get(pairKey);
+                        if (prev == null || distSq < prev.distSq) {
+                            bestByComponentPair.put(pairKey,
+                                    new GapBridgeEdge(c0, c1, x0, y0, x1, y1, distSq));
+                        }
+                    }
+                }
+            }
+        }
+
+        if (bestByComponentPair.isEmpty()) {
+            return pts;
+        }
+
+        ArrayList<GapBridgeEdge> edges = new ArrayList<>(bestByComponentPair.values());
+        edges.sort(Comparator.comparingInt(e -> e.distSq));
+
+        IntDisjointSet dsu = new IntDisjointSet(componentCount);
+        HashSet<Long> pixels = new HashSet<>((int) ((n + Math.max(16, edges.size() * cellSize)) / 0.75f) + 1);
+        pixels.addAll(indexOf.keySet());
+
+        boolean changed = false;
+        for (GapBridgeEdge edge : edges) {
+            if (!dsu.union(edge.compA, edge.compB)) {
+                continue;
+            }
+            rasterizeBridge(pixels, edge.ax, edge.ay, edge.bx, edge.by);
+            changed = true;
+        }
+
+        return changed ? toPointCollection(pixels) : pts;
+    }
+
+    private static PointCollection toPointCollection(Set<Long> pixels) {
+        TreeMap<Integer, List<Integer>> columns = new TreeMap<>();
+
+        for (long code : pixels) {
+            int x = (int) (code >> 32);
+            int y = (int) code;
+            columns.computeIfAbsent(x, k -> new ArrayList<>()).add(y);
+        }
+
+        for (List<Integer> ys : columns.values()) {
+            Collections.sort(ys);
+        }
+
+        return new PointCollection(columns);
+    }
+
+    private static void rasterizeBridge(Set<Long> pixels, int x0, int y0, int x1, int y1) {
+        int dx = Math.abs(x1 - x0);
+        int dy = Math.abs(y1 - y0);
+        int sx = x0 < x1 ? 1 : -1;
+        int sy = y0 < y1 ? 1 : -1;
+        int err = dx - dy;
+
+        while (true) {
+            pixels.add(enc(x0, y0));
+
+            if (x0 == x1 && y0 == y1) {
+                break;
+            }
+
+            int e2 = err << 1;
+            if (e2 > -dy) {
+                err -= dy;
+                x0 += sx;
+            }
+            if (e2 < dx) {
+                err += dx;
+                y0 += sy;
+            }
+        }
+    }
+
+    private static final class GapBridgeEdge {
+        private final int compA;
+        private final int compB;
+        private final int ax;
+        private final int ay;
+        private final int bx;
+        private final int by;
+        private final int distSq;
+
+        private GapBridgeEdge(int compA, int compB, int ax, int ay, int bx, int by, int distSq) {
+            this.compA = compA;
+            this.compB = compB;
+            this.ax = ax;
+            this.ay = ay;
+            this.bx = bx;
+            this.by = by;
+            this.distSq = distSq;
+        }
+    }
+
+    private static final class IntDisjointSet {
+        private final int[] parent;
+        private final byte[] rank;
+
+        private IntDisjointSet(int size) {
+            this.parent = new int[size];
+            this.rank = new byte[size];
+            for (int i = 0; i < size; i++) {
+                parent[i] = i;
+            }
+        }
+
+        private int find(int x) {
+            int root = x;
+            while (parent[root] != root) {
+                root = parent[root];
+            }
+            while (parent[x] != x) {
+                int next = parent[x];
+                parent[x] = root;
+                x = next;
+            }
+            return root;
+        }
+
+        private boolean union(int a, int b) {
+            int ra = find(a);
+            int rb = find(b);
+            if (ra == rb) {
+                return false;
+            }
+
+            if (rank[ra] < rank[rb]) {
+                parent[ra] = rb;
+            } else if (rank[ra] > rank[rb]) {
+                parent[rb] = ra;
+            } else {
+                parent[rb] = ra;
+                rank[ra]++;
+            }
+            return true;
+        }
+    }
+
+    private static final class IntBag {
+        private int[] data;
+        private int size;
+
+        private IntBag(int capacity) {
+            this.data = new int[Math.max(1, capacity)];
+        }
+
+        private void add(int value) {
+            if (size == data.length) {
+                data = Arrays.copyOf(data, data.length << 1);
+            }
+            data[size++] = value;
+        }
+
+        private int get(int index) {
+            return data[index];
+        }
+
+        private int size() {
+            return size;
+        }
+    }
+    //////////////////////
 
 
     private List<Point> traceBestLoop(Set<Long> boundary) {
@@ -181,6 +500,46 @@ public class ShapeContour implements Iterable<Point> {
             }
         }
         return best;
+    }
+
+    private static List<IntegerBounds> rawRuns(IntList ys) {
+        if (ys == null || ys.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        ArrayList<IntegerBounds> out = new ArrayList<>();
+        ys.onRaw();
+        ys.forEachRaw(b -> out.add(new IntegerBounds(b.getLowerBound(), b.getUpperBound())));
+        return out;
+    }
+
+    private static List<IntegerBounds> intersectRuns(List<IntegerBounds> a, List<IntegerBounds> b) {
+        if (a.isEmpty() || b.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        ArrayList<IntegerBounds> out = new ArrayList<>(Math.min(a.size(), b.size()));
+        int i = 0, j = 0;
+
+        while (i < a.size() && j < b.size()) {
+            IntegerBounds ra = a.get(i);
+            IntegerBounds rb = b.get(j);
+
+            int lo = Math.max(ra.getLowerBound(), rb.getLowerBound());
+            int hi = Math.min(ra.getUpperBound(), rb.getUpperBound());
+
+            if (lo <= hi) {
+                out.add(new IntegerBounds(lo, hi));
+            }
+
+            if (ra.getUpperBound() < rb.getUpperBound()) {
+                i++;
+            } else {
+                j++;
+            }
+        }
+
+        return out;
     }
     /*
     private List<Point> followExternal(Set<Long> boundary) {
@@ -369,35 +728,38 @@ public class ShapeContour implements Iterable<Point> {
     private List<Point> traceLargestLoop(Set<Long> boundary) {
         if (boundary.isEmpty()) return Collections.emptyList();
 
-        // BFS components on 8-connectivity
-        List<List<Long>> comps = new ArrayList<>();
-        Set<Long> seen = new HashSet<>((int) (boundary.size() / 0.75) + 1);
+        // Fastest version: this consumes boundary as the "unvisited" set.
         ArrayDeque<Long> q = new ArrayDeque<>();
+        List<Point> best = Collections.emptyList();
+        double bestA = -1.0;
 
-        for (long s : boundary) {
-            if (!seen.add(s)) continue;
-            List<Long> comp = new ArrayList<>();
-            q.clear(); q.add(s);
+        Set<Long> comp = new HashSet<>((boundary.size() * 4 + 2) / 3);
+        while (!boundary.isEmpty()) {
+            comp.clear();
+            long start = boundary.iterator().next();
+            boundary.remove(start);
+
+            q.clear();
+            q.add(start);
+
             while (!q.isEmpty()) {
                 long c = q.removeFirst();
                 comp.add(c);
-                int x = (int) (c >>> 32), y = (int) c;
+
+                int x = (int) (c >>> 32);
+                int y = (int) c;
+
                 for (int i = 0; i < 8; i++) {
-                    int nx = x + CHAIN8[i][0], ny = y + CHAIN8[i][1];
-                    Long nc = enc(nx, ny);
-                    if (boundary.contains(nc) && seen.add(nc)) q.addLast(nc);
+                    Long nc = enc(x + CHAIN8[i][0], y + CHAIN8[i][1]);
+                    if (boundary.remove(nc)) {
+                        q.addLast(nc);
+                    }
                 }
             }
-            comps.add(comp);
-        }
 
-        List<Point> best = Collections.emptyList();
-        double bestA = -1.0;
-        for (List<Long> comp : comps) {
-            // project component to a set again
-            Set<Long> compSet = new HashSet<>((int) (comp.size() / 0.75) + 1);
-            compSet.addAll(comp);
-            List<Point> loop = followExternal(compSet);
+            if (comp.size() < 4) continue;
+
+            List<Point> loop = followExternal(comp);
             if (!loop.isEmpty()) {
                 double a = Math.abs(signedArea(loop));
                 if (a > bestA || (a == bestA && loop.size() > best.size())) {
@@ -406,9 +768,9 @@ public class ShapeContour implements Iterable<Point> {
                 }
             }
         }
+
         return best;
     }
-
 
     private List<Point> mooreTraceComponent(List<Long> comp) {
         if (comp.isEmpty()) return Collections.emptyList();
@@ -1080,6 +1442,458 @@ public ShapeContour(PointCollection points) {
         return edges.get(normalized);
     }
 
+
+
+
+
+
+    public ShapeContour outerEdge() {
+        if (isEmpty()) {
+            return ShapeContour.empty();
+        }
+
+        if (size() < 3 || perimeter <= 0.0) {
+            return new ShapeContour(this.toList());
+        }
+
+        int bins = (int) Math.min(
+                131_072L,
+                Math.max(720L, (long) Math.ceil(perimeter * 1.5))
+        );
+
+        return outerEdge(bins);
+    }
+
+
+    public ShapeContour outerEdge(int binCount) {
+        if (isEmpty()) {
+            return ShapeContour.empty();
+        }
+
+        if (size() < 3 || perimeter <= 0.0) {
+            return new ShapeContour(this.toList());
+        }
+
+        binCount = Math.max(64, binCount);
+
+        final Point2D.Double c = this.centroid != null ? this.centroid : centroid();
+        final double cx = c.x;
+        final double cy = c.y;
+
+        final double[] bestT = new double[binCount];
+        final double[] bestX = new double[binCount];
+        final double[] bestY = new double[binCount];
+        final boolean[] hit = new boolean[binCount];
+
+        Arrays.fill(bestT, Double.NEGATIVE_INFINITY);
+
+        final int n = contour.size();
+
+        for (int i = 0; i < n; i++) {
+            Point a = contour.get(i);
+            Point b = contour.get((i + 1) % n);
+
+            outerEdgeAddVertexHit(cx, cy, a.x, a.y, binCount, bestT, bestX, bestY, hit);
+            outerEdgeAddVertexHit(cx, cy, b.x, b.y, binCount, bestT, bestX, bestY, hit);
+
+            outerEdgeRasterizeSegmentByAngle(
+                    cx, cy,
+                    a.x, a.y,
+                    b.x, b.y,
+                    binCount,
+                    bestT, bestX, bestY, hit
+            );
+        }
+
+        ArrayList<Point> ordered = outerEdgeBuildOrderedPath(bestX, bestY, hit);
+
+        if (ordered.size() < 3) {
+            return ShapeContour.empty();
+        }
+
+        ordered = outerEdgeNormalizeOrdered(ordered);
+
+        if (ordered.size() < 3) {
+            return ShapeContour.empty();
+        }
+
+        ShapeContour out = new ShapeContour(Collections.emptyList());
+        out.finalizeFromOrdered(ordered);
+        return out;
+    }
+
+    private static void outerEdgeRasterizeSegmentByAngle(
+            double cx, double cy,
+            double ax, double ay,
+            double bx, double by,
+            int binCount,
+            double[] bestT,
+            double[] bestX,
+            double[] bestY,
+            boolean[] hit
+    ) {
+        double dax = ax - cx;
+        double day = ay - cy;
+        double dbx = bx - cx;
+        double dby = by - cy;
+
+        double ra2 = dax * dax + day * day;
+        double rb2 = dbx * dbx + dby * dby;
+
+        if (ra2 <= 1.0e-12 && rb2 <= 1.0e-12) {
+            return;
+        }
+
+        double aa = Math.atan2(day, dax);
+        double ab = Math.atan2(dby, dbx);
+
+        if (aa < 0.0) aa += Math.PI * 2.0;
+        if (ab < 0.0) ab += Math.PI * 2.0;
+        double delta = ab - aa;
+
+        if (delta > Math.PI) {
+            delta -= Math.PI * 2.0;
+        } else if (delta < -Math.PI) {
+            delta += Math.PI * 2.0;
+        }
+
+        double start = aa;
+        double end = aa + delta;
+
+        if (end < start) {
+            double tmp = start;
+            start = end;
+            end = tmp;
+        }
+
+        outerEdgeProcessAngularInterval(
+                cx, cy,
+                ax, ay,
+                bx, by,
+                start,
+                end,
+                binCount,
+                bestT,
+                bestX,
+                bestY,
+                hit
+        );
+    }
+
+    private static void outerEdgeProcessAngularInterval(
+            double cx, double cy,
+            double ax, double ay,
+            double bx, double by,
+            double start,
+            double end,
+            int binCount,
+            double[] bestT,
+            double[] bestX,
+            double[] bestY,
+            boolean[] hit
+    ) {
+        final double twoPi = Math.PI * 2.0;
+        final double step = twoPi / binCount;
+        final double eps = 1.0e-9;
+        int first = (int) Math.ceil((start / step) - 0.5 - eps);
+        int last = (int) Math.floor((end / step) - 0.5 + eps);
+
+        if (first > last) {
+            double mid = (start + end) * 0.5;
+            int k = (int) Math.floor(mid / step);
+            outerEdgeTryRaySegmentHit(
+                    cx, cy,
+                    ax, ay,
+                    bx, by,
+                    k,
+                    binCount,
+                    bestT,
+                    bestX,
+                    bestY,
+                    hit
+            );
+            return;
+        }
+
+        for (int k = first; k <= last; k++) {
+            outerEdgeTryRaySegmentHit(
+                    cx, cy,
+                    ax, ay,
+                    bx, by,
+                    k,
+                    binCount,
+                    bestT,
+                    bestX,
+                    bestY,
+                    hit
+            );
+        }
+    }
+
+    private static void outerEdgeTryRaySegmentHit(
+            double cx, double cy,
+            double ax, double ay,
+            double bx, double by,
+            int rawBin,
+            int binCount,
+            double[] bestT,
+            double[] bestX,
+            double[] bestY,
+            boolean[] hit
+    ) {
+        int bin = Math.floorMod(rawBin, binCount);
+
+        final double theta = ((rawBin + 0.5) * (Math.PI * 2.0)) / binCount;
+        final double rx = Math.cos(theta);
+        final double ry = Math.sin(theta);
+
+        final double sx = bx - ax;
+        final double sy = by - ay;
+
+        final double qpx = ax - cx;
+        final double qpy = ay - cy;
+
+        final double denom = outerEdgeCross(rx, ry, sx, sy);
+        final double eps = 1.0e-9;
+
+        if (Math.abs(denom) < eps) {
+            return;
+        }
+
+        double t = outerEdgeCross(qpx, qpy, sx, sy) / denom;
+        double u = outerEdgeCross(qpx, qpy, rx, ry) / denom;
+
+        if (t >= -eps && u >= -eps && u <= 1.0 + eps) {
+            if (t > bestT[bin]) {
+                bestT[bin] = t;
+                bestX[bin] = cx + rx * t;
+                bestY[bin] = cy + ry * t;
+                hit[bin] = true;
+            }
+        }
+    }
+
+    private static void outerEdgeAddVertexHit(
+            double cx, double cy,
+            double x, double y,
+            int binCount,
+            double[] bestT,
+            double[] bestX,
+            double[] bestY,
+            boolean[] hit
+    ) {
+        double dx = x - cx;
+        double dy = y - cy;
+        double t = Math.hypot(dx, dy);
+
+        if (t <= 1.0e-9) {
+            return;
+        }
+
+        double angle = Math.atan2(dy, dx);
+        if (angle < 0.0) {
+            angle += Math.PI * 2.0;
+        }
+
+        int bin = (int) ((angle / (Math.PI * 2.0)) * binCount);
+        if (bin >= binCount) {
+            bin = binCount - 1;
+        }
+
+        if (t > bestT[bin]) {
+            bestT[bin] = t;
+            bestX[bin] = x;
+            bestY[bin] = y;
+            hit[bin] = true;
+        }
+    }
+
+    private static ArrayList<Point> outerEdgeBuildOrderedPath(
+            double[] bestX,
+            double[] bestY,
+            boolean[] hit
+    ) {
+        int n = hit.length;
+
+        int firstHit = -1;
+        for (int i = 0; i < n; i++) {
+            if (hit[i]) {
+                firstHit = i;
+                break;
+            }
+        }
+
+        if (firstHit < 0) {
+            return new ArrayList<>();
+        }
+
+        ArrayList<Point> out = new ArrayList<>(n);
+
+        Point prev = null;
+
+        for (int step = 0; step < n; step++) {
+            int i = (firstHit + step) % n;
+
+            if (!hit[i]) {
+                continue;
+            }
+
+            Point curr = new Point(
+                    (int) Math.round(bestX[i]),
+                    (int) Math.round(bestY[i])
+            );
+
+            if (prev == null) {
+                out.add(curr);
+                prev = curr;
+                continue;
+            }
+
+            outerEdgeAppendLine(out, prev, curr);
+            prev = curr;
+        }
+
+        if (out.size() >= 2) {
+            Point first = out.get(0);
+            Point last = out.get(out.size() - 1);
+            outerEdgeAppendLine(out, last, first);
+
+            if (out.size() >= 2) {
+                Point newLast = out.get(out.size() - 1);
+                if (newLast.x == first.x && newLast.y == first.y) {
+                    out.remove(out.size() - 1);
+                }
+            }
+        }
+
+        return out;
+    }
+
+    private static void outerEdgeAppendLine(ArrayList<Point> out, Point from, Point to) {
+        if (from == null || to == null) {
+            return;
+        }
+
+        int x0 = from.x;
+        int y0 = from.y;
+        int x1 = to.x;
+        int y1 = to.y;
+
+        int dx = Math.abs(x1 - x0);
+        int dy = Math.abs(y1 - y0);
+
+        int sx = x0 < x1 ? 1 : -1;
+        int sy = y0 < y1 ? 1 : -1;
+
+        int err = dx - dy;
+
+        while (true) {
+            outerEdgeAddPointIfDifferent(out, x0, y0);
+
+            if (x0 == x1 && y0 == y1) {
+                break;
+            }
+
+            int e2 = err << 1;
+
+            if (e2 > -dy) {
+                err -= dy;
+                x0 += sx;
+            }
+
+            if (e2 < dx) {
+                err += dx;
+                y0 += sy;
+            }
+        }
+    }
+
+    private static void outerEdgeAddPointIfDifferent(ArrayList<Point> out, int x, int y) {
+        int n = out.size();
+
+        if (n > 0) {
+            Point last = out.get(n - 1);
+            if (last.x == x && last.y == y) {
+                return;
+            }
+
+            if (n >= 2) {
+                Point prev = out.get(n - 2);
+                if (prev.x == x && prev.y == y) {
+                    out.remove(n - 1);
+                    return;
+                }
+            }
+        }
+
+        out.add(new Point(x, y));
+    }
+
+    private static ArrayList<Point> outerEdgeNormalizeOrdered(ArrayList<Point> pts) {
+        if (pts == null || pts.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        dedupeSpikes(pts);
+
+        int w = 0;
+        for (int i = 0; i < pts.size(); i++) {
+            Point p = pts.get(i);
+
+            if (w == 0) {
+                pts.set(w++, p);
+                continue;
+            }
+
+            Point last = pts.get(w - 1);
+            if (last.x != p.x || last.y != p.y) {
+                pts.set(w++, p);
+            }
+        }
+
+        while (pts.size() > w) {
+            pts.remove(pts.size() - 1);
+        }
+
+        if (pts.size() >= 2) {
+            Point first = pts.get(0);
+            Point last = pts.get(pts.size() - 1);
+
+            if (first.x == last.x && first.y == last.y) {
+                pts.remove(pts.size() - 1);
+            }
+        }
+
+        if (pts.size() < 3) {
+            return pts;
+        }
+
+        if (signedArea(pts) < 0.0) {
+            Collections.reverse(pts);
+        }
+
+        int start = 0;
+
+        for (int i = 1; i < pts.size(); i++) {
+            Point a = pts.get(start);
+            Point b = pts.get(i);
+
+            if (b.y > a.y || (b.y == a.y && b.x < a.x)) {
+                start = i;
+            }
+        }
+
+        if (start > 0) {
+            Collections.rotate(pts, -start);
+        }
+
+        return pts;
+    }
+
+    private static double outerEdgeCross(double ax, double ay, double bx, double by) {
+        return ax * by - ay * bx;
+    }
+
     public ShapeContour halfwayOld(ShapeContour other) {
         Objects.requireNonNull(other, "other");
 
@@ -1127,8 +1941,6 @@ public ShapeContour(PointCollection points) {
 
         return midway.isEmpty() ? ShapeContour.empty() : new ShapeContour(midway);
     }
-    // === ShapeContour.java ===
-// Add these methods inside ShapeContour (e.g., near other public mutators)
 
     public ShapeContour expand(int pixels) {
         if (pixels <= 0 || isEmpty()) return this;
@@ -1143,14 +1955,317 @@ public ShapeContour(PointCollection points) {
         return new ShapeContour(dilated);
     }
 
-    private PointCollection rasterizeFilledPixels() {
+/*
+    public PointCollection rasterizeFilledPixels() {
         PointCollection solid = new PointCollection();
-        Iterator<Point> it = insideIterator();
-        while (it.hasNext()) {
-            solid.add(it.next());
+        if (isEmpty()) return solid;
+
+        final int n = contour.size();
+        if (n < 3) {
+            PointCollection boundary = new PointCollection(contour);
+            boundary.onRaw();
+            PointIterator it = boundary.iterator();
+            while (it.hasNext()) {
+                Map.Entry<Integer, IntList> entry = it.nextEntry();
+                solid.addAtX(entry.getKey(), entry.getValue());
+            }
+            return solid;
         }
+
+        int minX = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+
+        for (Point p : contour) {
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+        }
+
+        ArrayList<Double> intersections = new ArrayList<>(Math.max(8, n));
+
+        for (int x = minX; x <= maxX; x++) {
+            intersections.clear();
+            double scanX = x + 0.5d;
+
+            for (int i = 0, j = n - 1; i < n; j = i++) {
+                Point a = contour.get(j);
+                Point b = contour.get(i);
+
+                if (a.x == b.x) continue;
+
+                double ax = a.x;
+                double bx = b.x;
+
+                boolean crosses = (ax <= scanX && bx > scanX) || (bx <= scanX && ax > scanX);
+                if (!crosses) continue;
+
+                double t = (scanX - ax) / (bx - ax);
+                double y = a.y + (t * (b.y - a.y));
+                intersections.add(y);
+            }
+
+            if (intersections.isEmpty()) continue;
+
+            intersections.sort(Double::compare);
+
+            int count = 0;
+            for (int i = 0; i + 1 < intersections.size(); i += 2) {
+                double y0 = intersections.get(i);
+                double y1 = intersections.get(i + 1);
+
+                int startY = (int) Math.ceil(Math.min(y0, y1) - 0.5d);
+                int endY = (int) Math.floor(Math.max(y0, y1) - 0.5d);
+
+                if (startY <= endY) {
+                    count += (endY - startY + 1);
+                }
+            }
+
+            if (count == 0) continue;
+
+            int[] ys = new int[count];
+            int k = 0;
+
+            for (int i = 0; i + 1 < intersections.size(); i += 2) {
+                double y0 = intersections.get(i);
+                double y1 = intersections.get(i + 1);
+
+                int startY = (int) Math.ceil(Math.min(y0, y1) - 0.5d);
+                int endY = (int) Math.floor(Math.max(y0, y1) - 0.5d);
+
+                for (int y = startY; y <= endY; y++) {
+                    ys[k++] = y;
+                }
+            }
+
+            solid.addAtX(x, ys);
+        }
+
+        // Merge contour columns in one column-at-a-time pass using PointIterator.
+        PointCollection boundary = new PointCollection(contour);
+        boundary.onRaw();
+        PointIterator it = boundary.iterator();
+        while (it.hasNext()) {
+            Map.Entry<Integer, IntList> entry = it.nextEntry();
+            solid.addAtX(entry.getKey(), entry.getValue());
+        }
+
+        return solid;
+    }*/
+
+    public PointCollection rasterizeFilledPixels() {
+        PointCollection solid = new PointCollection();
+        if (isEmpty()) return solid;
+
+        final int n = contour.size();
+
+        if (n < 3) {
+            PointCollection boundary = new PointCollection(contour);
+            boundary.onRaw();
+
+            PointIterator it = boundary.iterator();
+            while (it.hasNext()) {
+                Map.Entry<Integer, IntList> entry = it.nextEntry();
+                solid.addAtX(entry.getKey(), entry.getValue());
+            }
+
+            return solid;
+        }
+
+        int minX = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+
+        for (Point p : contour) {
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+        }
+
+        final int width = maxX - minX + 1;
+        if (width <= 0) return solid;
+
+        /*
+         * CHANGE:
+         * Instead of rebuilding an ArrayList<Double> of intersections for every x,
+         * build an edge table once. Each edge is inserted into the scan column where
+         * it first becomes active.
+         */
+        class ActiveEdge {
+            int endX;
+            double y;
+            double stepY;
+            ActiveEdge next;
+
+            ActiveEdge(int endX, double y, double stepY, ActiveEdge next) {
+                this.endX = endX;
+                this.y = y;
+                this.stepY = stepY;
+                this.next = next;
+            }
+        }
+
+        ActiveEdge[] edgeStarts = new ActiveEdge[width];
+        int edgeCount = 0;
+
+        /*
+         * CHANGE:
+         * Register each non-vertical contour segment once.
+         *
+         * Original crossing rule:
+         *
+         *     lowX <= x + 0.5 < highX
+         *
+         * Since contour coordinates are integer pixel positions, this means an edge
+         * from left.x to right.x is active for columns:
+         *
+         *     left.x through right.x - 1
+         */
+        for (int i = 0, j = n - 1; i < n; j = i++) {
+            Point a = contour.get(j);
+            Point b = contour.get(i);
+
+            if (a.x == b.x) continue;
+
+            Point left;
+            Point right;
+
+            if (a.x < b.x) {
+                left = a;
+                right = b;
+            } else {
+                left = b;
+                right = a;
+            }
+
+            int startX = left.x;
+            int endX = right.x - 1;
+
+            if (endX < minX || startX > maxX) continue;
+
+            if (startX < minX) startX = minX;
+            if (endX > maxX) endX = maxX;
+
+            double stepY = (right.y - left.y) / (double) (right.x - left.x);
+
+            /*
+             * y-intersection at scanX = startX + 0.5
+             */
+            double y = left.y + ((startX + 0.5d - left.x) * stepY);
+
+            int bucket = startX - minX;
+            edgeStarts[bucket] = new ActiveEdge(endX, y, stepY, edgeStarts[bucket]);
+            edgeCount++;
+        }
+
+        ActiveEdge[] active = new ActiveEdge[Math.max(4, edgeCount)];
+        int activeSize = 0;
+
+        for (int x = minX; x <= maxX; x++) {
+            int bucket = x - minX;
+
+            /*
+             * CHANGE:
+             * Add only the edges that begin at this x-column.
+             * No full contour scan happens here anymore.
+             */
+            for (ActiveEdge e = edgeStarts[bucket]; e != null; e = e.next) {
+                active[activeSize++] = e;
+            }
+
+            /*
+             * Remove expired edges.
+             */
+            int keep = 0;
+            for (int i = 0; i < activeSize; i++) {
+                ActiveEdge e = active[i];
+                if (e.endX >= x) {
+                    active[keep++] = e;
+                }
+            }
+            activeSize = keep;
+
+            if (activeSize >= 2) {
+                /*
+                 * CHANGE:
+                 * Active edges are usually almost sorted from one column to the next,
+                 * so insertion sort is typically faster than general-purpose sorting here.
+                 */
+                for (int i = 1; i < activeSize; i++) {
+                    ActiveEdge e = active[i];
+                    double y = e.y;
+
+                    int j = i - 1;
+                    while (j >= 0 && active[j].y > y) {
+                        active[j + 1] = active[j];
+                        j--;
+                    }
+
+                    active[j + 1] = e;
+                }
+
+                int count = 0;
+
+                /*
+                 * Same even-odd fill rule as before: pair sorted intersections.
+                 */
+                for (int i = 0; i + 1 < activeSize; i += 2) {
+                    double y0 = active[i].y;
+                    double y1 = active[i + 1].y;
+
+                    int startY = (int) Math.ceil(y0 - 0.5d);
+                    int endY = (int) Math.floor(y1 - 0.5d);
+
+                    if (startY <= endY) {
+                        count += endY - startY + 1;
+                    }
+                }
+
+                if (count > 0) {
+                    int[] ys = new int[count];
+                    int k = 0;
+
+                    for (int i = 0; i + 1 < activeSize; i += 2) {
+                        double y0 = active[i].y;
+                        double y1 = active[i + 1].y;
+
+                        int startY = (int) Math.ceil(y0 - 0.5d);
+                        int endY = (int) Math.floor(y1 - 0.5d);
+
+                        for (int y = startY; y <= endY; y++) {
+                            ys[k++] = y;
+                        }
+                    }
+
+                    solid.addAtX(x, ys);
+                }
+            }
+
+            /*
+             * CHANGE:
+             * Instead of recomputing each intersection from scratch next column,
+             * incrementally advance the active edge's y-intersection.
+             */
+            for (int i = 0; i < activeSize; i++) {
+                ActiveEdge e = active[i];
+                if (e.endX > x) {
+                    e.y += e.stepY;
+                }
+            }
+        }
+
+        /*
+         * Merge contour boundary columns.
+         */
+        PointCollection boundary = new PointCollection(contour);
+        boundary.onRaw();
+
+        PointIterator it = boundary.iterator();
+        while (it.hasNext()) {
+            Map.Entry<Integer, IntList> entry = it.nextEntry();
+            solid.addAtX(entry.getKey(), entry.getValue());
+        }
+
         return solid;
     }
+
 
     private static PointCollection dilateFilledPixels(PointCollection solid, int radius) {
         if (radius <= 0 || solid == null || solid.isEmpty()) {
@@ -1236,7 +2351,14 @@ public ShapeContour(PointCollection points) {
 
     public ShapeContour contract(int pixels) {
         if (pixels <= 0 || isEmpty()) return this;
-        return offsetBy(-pixels);
+
+        PointCollection solid = rasterizeFilledPixels();
+        if (solid.isEmpty()) return ShapeContour.empty();
+
+        PointCollection contracted = solid.contract(pixels);
+        if (contracted.isEmpty()) return ShapeContour.empty();
+
+        return new ShapeContour(contracted);
     }
 
     /**
@@ -2995,6 +4117,55 @@ public ShapeContour(PointCollection points) {
         return "ShapeContour{vertices=" + size() + ", perimeter=" + perimeter + ", area=" + area() + "}";
     }
 
+
+
+    public String toDebugDumpString() {
+        StringBuilder out = new StringBuilder(Math.max(64, size() * 16));
+        out.append("CTSHAPECONTOUR\t1\n");
+        out.append("SIZE\t").append(size()).append('\n');
+        for (Point point : contour) {
+            out.append("P\t").append(point.x).append('\t').append(point.y).append('\n');
+        }
+        return out.toString();
+    }
+
+    public static ShapeContour fromDebugDumpString(String dump) {
+        if (dump == null) {
+            throw new IllegalArgumentException("ShapeContour debug dump cannot be null");
+        }
+        String[] lines = dump.split("\\R", -1);
+        if (lines.length == 0 || !"CTSHAPECONTOUR\t1".equals(lines[0])) {
+            throw new IllegalArgumentException("Not a ShapeContour debug dump");
+        }
+
+        int expectedSize = -1;
+        ArrayList<Point> points = new ArrayList<>();
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i];
+            if (line == null || line.isEmpty()) continue;
+            String[] parts = line.split("\\t");
+            if (parts.length == 0) continue;
+            if ("SIZE".equals(parts[0]) && parts.length >= 2) {
+                expectedSize = Integer.parseInt(parts[1]);
+                points.ensureCapacity(Math.max(0, expectedSize));
+                continue;
+            }
+            if (!"P".equals(parts[0]) || parts.length < 3) {
+                throw new IllegalArgumentException("Malformed ShapeContour dump line: " + line);
+            }
+            points.add(new Point(Integer.parseInt(parts[1]), Integer.parseInt(parts[2])));
+        }
+
+        if (expectedSize >= 0 && points.size() != expectedSize) {
+            throw new IllegalArgumentException("ShapeContour dump declared " + expectedSize + " points but decoded " + points.size());
+        }
+
+        ShapeContour contour = new ShapeContour(new PointCollection());
+        contour.finalizeFromOrdered(points);
+        return contour;
+    }
+
+
     private static List<Point> collectPoints(PointCollection pointCollection) {
         if (pointCollection == null || pointCollection.isEmpty()) {
             return Collections.emptyList();
@@ -3727,10 +4898,107 @@ public boolean inside(Point point) {
         }
     }
 
+
     private static boolean colContainsY(IntList ys, int y) {
         if (ys == null || ys.isEmpty()) return false;
         return ys.contains(y);
     }
+    private static boolean colContainsY(IntList ys, int y, Map<Integer, Boolean> cachedLookups) {
+        return cachedLookups.computeIfAbsent(y, key -> colContainsY(ys, y));
+    }
+    private static boolean[] colContainsY(IntList ys, int... y) {
+        if (ys == null || ys.isEmpty()) return CollectionsEx.fill(boolean[]::new, y.length, false);
+        return ys.contains(y);
+    }
+    /*
+    private static boolean[] colContainsY(IntList ys, Map<Integer, Boolean> cachedLookups, int... y) {
+        if (ys == null || ys.isEmpty()) return CollectionsEx.fill(boolean[]::new, y.length, false);
+        boolean[] out = new boolean[y.length];
+        Map<Integer, Integer> toLookup = new HashMap<>(y.length);
+        for (int i = 0; i < y.length; i++) {
+            int y1 = y[i];
+            Boolean present;
+            if ((present = cachedLookups.get(y1)) != null) {
+                out[i] = present;
+            } else {
+                toLookup.put(i, y1);
+            }
+        }
+        if (toLookup.isEmpty()) return out;
+        boolean[] remainingOut = ys.contains(CollectionsEx.toPrimitiveInt(toLookup.values()));
+        toLookup.forEach((i, y1) -> {
+            out[i] = remainingOut[i];
+        });
+        return out;
+    }*/
+    private static boolean[] colContainsY(IntList ys, Map<Integer, Boolean> cachedLookups, int... y) {
+        if (ys == null || ys.isEmpty()) return CollectionsEx.fill(boolean[]::new, y.length, false);
+
+        boolean[] out = new boolean[y.length];
+
+        for (int i = 0; i < y.length; i++) {
+            int y1 = y[i];
+            Boolean present;
+
+            if ((present = cachedLookups.get(y1)) != null) {
+                out[i] = present;
+            } else {
+                boolean[] presentArr = ys.contains(y);
+
+                for (int j = 0; j < y.length; j++) {
+                    out[j] = presentArr[j];
+                    cachedLookups.put(y[j], presentArr[j]);
+                }
+
+                return out;
+            }
+        }
+
+        return out;
+    }
+    /*
+    private static boolean[] colContainsY(IntList ys, Map<Integer, Boolean> cachedLookups, int... y) {
+        boolean[] out = new boolean[y.length];
+
+        if (y.length == 0 || ys == null || ys.isEmpty()) {
+            return out;
+        }
+
+        int[] missedYs = new int[y.length];
+        int[] missedIdx = new int[y.length];
+        int missedCount = 0;
+
+        for (int i = 0; i < y.length; i++) {
+            int value = y[i];
+            Boolean cached = cachedLookups.get(value);
+
+            if (cached != null) {
+                out[i] = cached;
+            } else {
+                missedIdx[missedCount] = i;
+                missedYs[missedCount] = value;
+                missedCount++;
+            }
+        }
+
+        if (missedCount == 0) {
+            return out;
+        }
+
+        int[] queryYs = java.util.Arrays.copyOf(missedYs, missedCount);
+        boolean[] results = ys.contains(queryYs);
+
+        for (int i = 0; i < missedCount; i++) {
+            boolean present = results[i];
+            int index = missedIdx[i];
+            int value = queryYs[i];
+
+            out[index] = present;
+            cachedLookups.put(value, present);
+        }
+
+        return out;
+    }*/
 
     private static final class ContourVertex {
         final Point point;

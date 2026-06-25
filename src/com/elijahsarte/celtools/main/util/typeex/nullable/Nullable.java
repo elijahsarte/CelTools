@@ -1,6 +1,7 @@
 package com.elijahsarte.celtools.main.util.typeex.nullable;
 
 import java.util.Objects;
+import java.util.function.Function;
 
 public class Nullable<T> {
 
@@ -21,6 +22,14 @@ public class Nullable<T> {
     }
     public T get() {
         return this.val;
+    }
+
+    public Nullable<T> ifPresent(Runnable runnable) {
+        if (isSet()) runnable.run();
+        return this;
+    }
+    public <V> Nullable<V> map(Function<T, V> map) {
+        return new Nullable<>(isSet() ? map.apply(this.val) : null);
     }
 
     public boolean equals(Object o) {

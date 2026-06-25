@@ -6,7 +6,7 @@ import com.elijahsarte.celtools.main.Main;
 import java.util.List;
 import java.util.function.Supplier;
 
-public final class CLPP extends ProgramPage {
+public final class CLPS extends ProgramPage {
 
     @Override
     public String name() {
@@ -15,9 +15,9 @@ public final class CLPP extends ProgramPage {
     @Override
     public List<ProgramArg> args() {
         return ProgramArg.ofAll(
-                "Entire cel", "entire-cel", "file",
+                "Entire cel(s)", "all-cels", "file",
                 "Background cel", "background-cel", "file",
-                "Output cel", "output-cel", "file",
+                "Output cel(s)", "output-cel", "file",
                 "Outline data", "cropbox", "text"
         );
     }

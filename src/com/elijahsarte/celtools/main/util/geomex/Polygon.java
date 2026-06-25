@@ -81,62 +81,6 @@ public class Polygon {
         return new Polygon(top, bottom);
 
     }
-    // inside Polygon.java
-/*
-    public static Polygon of(com.elijahsarte.celtools.main.util.structures.collections.point.PointCollection pts) {
-        if (pts == null || pts.size() < 2) {
-            throw new IllegalArgumentException("PointCollection too small");
-        }
-
-        java.util.List<Line> top = new java.util.ArrayList<Line>();
-        java.util.List<Line> bottom = new java.util.ArrayList<Line>();
-
-        java.awt.Point prevTop = null;
-        java.awt.Point prevBottom = null;
-        boolean giveSingletonToTop = true;
-
-        for (int x : pts.xes()) { // xes() is sorted by contract
-            com.elijahsarte.celtools.main.util.structures.collections.IntList ys = pts.getYesAtX(x);
-            if (ys == null || ys.size() == 0) continue;
-
-            int yMin = ys.first(); // least element by your definition
-            int yMax = ys.last();  // greatest element
-
-            if (yMin == yMax) {
-                java.awt.Point p = new java.awt.Point(x, yMin);
-
-                if (giveSingletonToTop) {
-                    if (prevTop != null && !prevTop.equals(p)) {
-                        top.add(new Line(prevTop, p));
-                    }
-                    prevTop = p;
-                } else {
-                    if (prevBottom != null && !prevBottom.equals(p)) {
-                        bottom.add(new Line(prevBottom, p));
-                    }
-                    prevBottom = p;
-                }
-                giveSingletonToTop = !giveSingletonToTop; // prevent identical first/last edges
-            } else {
-                java.awt.Point pTop = new java.awt.Point(x, yMin);
-                java.awt.Point pBottom = new java.awt.Point(x, yMax);
-
-                if (prevTop != null && !prevTop.equals(pTop)) {
-                    top.add(new Line(prevTop, pTop));
-                }
-                prevTop = pTop;
-
-                if (prevBottom != null && !prevBottom.equals(pBottom)) {
-                    bottom.add(new Line(prevBottom, pBottom));
-                }
-                prevBottom = pBottom;
-            }
-        }
-
-        return new Polygon(top, bottom);
-//        this.top = top;
-        this.bottom = bottom;
-    }*/
 
 
     public static Polygon of(List<Line> lines) {
@@ -289,18 +233,23 @@ public class Polygon {
         leftX(); rightX(); topY(); bottomY();
     }
 
-    private int probableIndex(List<Line> list, int x) {
-        return MathEx.roundInt(MathEx.divide(x, MathEx.divide(leftX() - rightX(), list.size() - 1)));
+    private double probableTopRatio = Double.MIN_VALUE, probableBottomRatio = Double.MIN_VALUE;
+    private int probableTopIndex(double x) {
+        if (probableTopRatio == Double.MIN_VALUE) probableTopRatio = MathEx.divide(leftX() - rightX(), top.size() - 1);
+        return MathEx.roundInt(x / probableTopRatio);
     }
+    private int probableBottomIndex(double x) {
+        if (probableBottomRatio == Double.MIN_VALUE) probableBottomRatio = MathEx.divide(leftX() - rightX(), bottom.size() - 1);
+        return MathEx.roundInt(x / probableBottomRatio);
+    }
+
     public boolean contains(Point pt, boolean inclusive) {
         if (!containsX(pt)) return false;
 
         NullableBoolean aboveBottom = new NullableBoolean(), belowTop = new NullableBoolean();
-        OptionalEx.ofCond(CollectionsEx.binarySearchLine(bottom, pt.x, probableIndex(bottom, pt.x)), i -> i != -1)
-                .then(bottom::get)
+        OptionalEx.ofNullable(CollectionsEx.binarySearchLine(bottom, pt.x, probableBottomIndex(pt.x)))
                 .thenRun(b -> aboveBottom.set(b.above(pt) || (inclusive && b.on(pt))));
-        OptionalEx.ofCond(CollectionsEx.binarySearchLine(top, pt.x, probableIndex(top, pt.x)), i -> i != -1)
-                .then(top::get)
+        OptionalEx.ofNullable(CollectionsEx.binarySearchLine(top, pt.x, probableTopIndex(pt.x)))
                 .thenRun(b -> belowTop.set(b.below(pt) || (inclusive && b.on(pt))));
         return aboveBottom.isTrue() && belowTop.isTrue();
     }

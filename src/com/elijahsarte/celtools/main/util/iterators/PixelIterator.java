@@ -17,6 +17,8 @@ public class PixelIterator {
 
     private final boolean horiz, async;
 
+    private final int[] currRGB = new int[3];
+
     public PixelIterator(int[] pixels, int width, int height, boolean horiz, boolean async) {
         this.pixels = pixels;
         this.width = width;
@@ -43,17 +45,18 @@ public class PixelIterator {
 
     // pixels, col, row, pixelIndex, rawRGB, double[] rgb, colLoop, rowLoop
     public void execute(OctaConsumer<int[], Integer, Integer, Integer, Integer, int[], ForIncrement, ForIncrement> body) {
-        QuadConsumer<Double, Double, ForIncrement, ForIncrement> innerBlock = (col, row, colLoop, rowLoop) -> {
-            int index = (int) ((row * width) + col), rgb = pixels[index], r = (rgb >> 16) & 0xFF, g = (rgb >> 8) & 0xFF, b = rgb & 0xFF;
-            body.accept(pixels, col.intValue(), row.intValue(), index, rgb, new int[] { r, g, b }, colLoop, rowLoop);
+        QuadConsumer<Integer, Integer, ForIncrement, ForIncrement> innerBlock = (col, row, colLoop, rowLoop) -> {
+            int index = ((row * width) + col), rgb = pixels[index], r = (rgb >> 16) & 0xFF, g = (rgb >> 8) & 0xFF, b = rgb & 0xFF;
+            currRGB[0] = r; currRGB[1] = g; currRGB[2] = b;
+            body.accept(pixels, col, row, index, rgb, currRGB, colLoop, rowLoop);
         };
 
         if (horiz) {
-            new ForIncrement(0, height, 1, this.async).execute((row, rowLoop) -> new ForIncrement(0, width, 1, this.async).execute((col, colLoop) ->
+            new ForIncrement(0, height, 1, this.async).executeInt((row, rowLoop) -> new ForIncrement(0, width, 1, this.async).executeInt((col, colLoop) ->
                 innerBlock.accept(col, row, colLoop, rowLoop)
             ));
         } else {
-            new ForIncrement(0, width, 1, this.async).execute((col, colLoop) -> new ForIncrement(0, height, 1, this.async).execute((row, rowLoop) ->
+            new ForIncrement(0, width, 1, this.async).executeInt((col, colLoop) -> new ForIncrement(0, height, 1, this.async).executeInt((row, rowLoop) ->
                 innerBlock.accept(col, row, colLoop, rowLoop)
             ));
         }

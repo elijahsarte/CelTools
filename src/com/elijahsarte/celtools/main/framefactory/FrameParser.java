@@ -19,6 +19,9 @@ public class FrameParser {
     public static final int NO_PIXEL = -16777215;
     public static final int FILTERED_PIXEL = -1;
 
+    private static final ThreadLocal<float[]> colorArr = ThreadLocal.withInitial(() -> new float[3]);
+    private static final ThreadLocal<double[]> hsvArr = ThreadLocal.withInitial(() -> new double[3]);
+
 
 
     public static <T extends Number> double normalize(T value, double min, double max) {
@@ -32,61 +35,61 @@ public class FrameParser {
         return denormalize(normalize(value, oldMin, oldMax), newMin, newMax);
     }
 
-    public static <T extends Number> double[] conv360HSV(T[] hsv) {
-        return new double[] {
-                convertScale(hsv[0], 0, 1, 0, 360),
-                convertScale(hsv[1], 0, 1, 0, 100),
-                convertScale(hsv[2], 0, 1, 0, 100),
-        };
+    public static <T extends Number> double[] conv360HSV(T[] hsv, double[] outHsv) {
+        if (outHsv == null || outHsv.length < 3) outHsv = new double[3];
+        outHsv[0] = convertScale(hsv[0], 0, 1, 0, 360);
+        outHsv[1] = convertScale(hsv[1], 0, 1, 0, 100);
+        outHsv[2] = convertScale(hsv[2], 0, 1, 0, 100);
+        return outHsv;
     }
-    public static double[] conv360HSV(int[] hsv) {
-        return new double[] {
-                convertScale(hsv[0], 0, 1, 0, 360),
-                convertScale(hsv[1], 0, 1, 0, 100),
-                convertScale(hsv[2], 0, 1, 0, 100),
-        };
+    public static double[] conv360HSV(int[] hsv, double[] outHsv) {
+        if (outHsv == null || outHsv.length < 3) outHsv = new double[3];
+        outHsv[0] = convertScale(hsv[0], 0, 1, 0, 360);
+        outHsv[1] = convertScale(hsv[1], 0, 1, 0, 100);
+        outHsv[2] = convertScale(hsv[2], 0, 1, 0, 100);
+        return outHsv;
     }
-    public static double[] conv360HSV(double[] hsv) {
-        return new double[] {
-                convertScale(hsv[0], 0, 1, 0, 360),
-                convertScale(hsv[1], 0, 1, 0, 100),
-                convertScale(hsv[2], 0, 1, 0, 100),
-        };
+    public static double[] conv360HSV(double[] hsv, double[] outHsv) {
+        if (outHsv == null || outHsv.length < 3) outHsv = new double[3];
+        outHsv[0] = convertScale(hsv[0], 0, 1, 0, 360);
+        outHsv[1] = convertScale(hsv[1], 0, 1, 0, 100);
+        outHsv[2] = convertScale(hsv[2], 0, 1, 0, 100);
+        return outHsv;
     }
-    public static double[] conv360HSV(float[] hsv) {
-        return new double[] {
-                convertScale(hsv[0], 0, 1, 0, 360),
-                convertScale(hsv[1], 0, 1, 0, 100),
-                convertScale(hsv[2], 0, 1, 0, 100),
-        };
+    public static double[] conv360HSV(float[] hsv, double[] outHsv) {
+        if (outHsv == null || outHsv.length < 3) outHsv = new double[3];
+        outHsv[0] = convertScale(hsv[0], 0, 1, 0, 360);
+        outHsv[1] = convertScale(hsv[1], 0, 1, 0, 100);
+        outHsv[2] = convertScale(hsv[2], 0, 1, 0, 100);
+        return outHsv;
     }
-    public static <T extends Number> double[] convPercentHSV(T[] hsv) {
-        return new double[] {
-                convertScale(hsv[0], 0, 360, 0, 1),
-                convertScale(hsv[1], 0, 100, 0, 1),
-                convertScale(hsv[2], 0, 100, 0, 1)
-        };
+    public static <T extends Number> double[] convPercentHSV(T[] hsv, double[] outHsv) {
+        if (outHsv == null || outHsv.length < 3) outHsv = new double[3];
+        outHsv[0] = convertScale(hsv[0], 0, 360, 0, 1);
+        outHsv[1] = convertScale(hsv[1], 0, 100, 0, 1);
+        outHsv[2] = convertScale(hsv[2], 0, 100, 0, 1);
+        return outHsv;
     }
-    public static double[] convPercentHSV(double[] hsv) {
-        return new double[] {
-                convertScale(hsv[0], 0, 360, 0, 1),
-                convertScale(hsv[1], 0, 100, 0, 1),
-                convertScale(hsv[2], 0, 100, 0, 1)
-        };
+    public static double[] convPercentHSV(double[] hsv, double[] outHsv) {
+        if (outHsv == null || outHsv.length < 3) outHsv = new double[3];
+        outHsv[0] = convertScale(hsv[0], 0, 360, 0, 1);
+        outHsv[1] = convertScale(hsv[1], 0, 100, 0, 1);
+        outHsv[2] = convertScale(hsv[2], 0, 100, 0, 1);
+        return outHsv;
     }
-    public static double[] convPercentHSV(int[] hsv) {
-        return new double[] {
-                convertScale(hsv[0], 0, 360, 0, 1),
-                convertScale(hsv[1], 0, 100, 0, 1),
-                convertScale(hsv[2], 0, 100, 0, 1)
-        };
+    public static double[] convPercentHSV(int[] hsv, double[] outHsv) {
+        if (outHsv == null || outHsv.length < 3) outHsv = new double[3];
+        outHsv[0] = convertScale(hsv[0], 0, 360, 0, 1);
+        outHsv[1] = convertScale(hsv[1], 0, 100, 0, 1);
+        outHsv[2] = convertScale(hsv[2], 0, 100, 0, 1);
+        return outHsv;
     }
-    public static double[] convPercentHSV(float[] hsv) {
-        return new double[] {
-                convertScale(hsv[0], 0, 360, 0, 1),
-                convertScale(hsv[1], 0, 100, 0, 1),
-                convertScale(hsv[2], 0, 100, 0, 1)
-        };
+    public static double[] convPercentHSV(float[] hsv, double[] outHsv) {
+        if (outHsv == null || outHsv.length < 3) outHsv = new double[3];
+        outHsv[0] = convertScale(hsv[0], 0, 360, 0, 1);
+        outHsv[1] = convertScale(hsv[1], 0, 100, 0, 1);
+        outHsv[2] = convertScale(hsv[2], 0, 100, 0, 1);
+        return outHsv;
     }
 
 
@@ -138,21 +141,35 @@ public class FrameParser {
     }
 
 
+
+
     public static double[] RGBtoHSV(int[] rgb) {
-        return conv360HSV(Color.RGBtoHSB(rgb[0], rgb[1], rgb[2], null));
+        return conv360HSV(Color.RGBtoHSB(rgb[0], rgb[1], rgb[2], colorArr.get()), hsvArr.get());
+    }
+    public static double[] RGBtoHSV(int r, int g, int b, double[] outHsv) {
+        if (outHsv == null) outHsv = new double[3];
+//        float[] color = colorArr.get();
+        return conv360HSV(Color.RGBtoHSB(r, g, b, colorArr.get()), outHsv);
+    }
+    public static double[] RGBtoHSV(int[] rgb, double[] outHsv) {
+        return RGBtoHSV(rgb[0], rgb[1], rgb[2], outHsv);
+    }
+    public static double[] RGBtoHSV(int rgb, double[] outHsv) {
+        return RGBtoHSV(rgb >> 16 & 0xFF, rgb >> 8 & 0xFF, rgb & 0xFF, outHsv);
     }
 
+
     public static <T extends Number> int[] HSVtoRGB(T[] hsv) {
-        return FastRGB.getRGB(ProgrammingEx.varOper(convPercentHSV(hsv), f -> Color.HSBtoRGB((float) f[0], (float) f[1], (float) f[2])));
+        return FastRGB.getRGB(ProgrammingEx.varOper(convPercentHSV(hsv, null), f -> Color.HSBtoRGB((float) f[0], (float) f[1], (float) f[2])));
     }
     public static int[] HSVtoRGB(int[] hsv) {
-        return FastRGB.getRGB(ProgrammingEx.varOper(convPercentHSV(hsv), f -> Color.HSBtoRGB((float) f[0], (float) f[1], (float) f[2])));
+        return FastRGB.getRGB(ProgrammingEx.varOper(convPercentHSV(hsv, null), f -> Color.HSBtoRGB((float) f[0], (float) f[1], (float) f[2])));
     }
     public static int[] HSVtoRGB(double[] hsv) {
-        return FastRGB.getRGB(ProgrammingEx.varOper(convPercentHSV(hsv), f -> Color.HSBtoRGB((float) f[0], (float) f[1], (float) f[2])));
+        return FastRGB.getRGB(ProgrammingEx.varOper(convPercentHSV(hsv, null), f -> Color.HSBtoRGB((float) f[0], (float) f[1], (float) f[2])));
     }
     public static int[] HSVtoRGB(float[] hsv) {
-        return FastRGB.getRGB(ProgrammingEx.varOper(convPercentHSV(hsv), f -> Color.HSBtoRGB((float) f[0], (float) f[1], (float) f[2])));
+        return FastRGB.getRGB(ProgrammingEx.varOper(convPercentHSV(hsv, null), f -> Color.HSBtoRGB((float) f[0], (float) f[1], (float) f[2])));
     }
 
 
@@ -162,13 +179,15 @@ public class FrameParser {
     }
     // only takes hsv scales where h is 0 to 360, s is 0 to 100, and v as well
     public static void filterHSV(int[] pixels, int width, int height, HSVBounds hsvBounds, OctaConsumer<int[], Integer, Integer, Integer, Integer, int[], ForIncrement, ForIncrement> filterFn, OctaConsumer<int[], Integer, Integer, Integer, Integer, int[], ForIncrement, ForIncrement> elseFn) {
+        double[] currHSV = new double[3];
+        float[] hColorArr = colorArr.get();
         new PixelIterator(pixels, width, height).execute((hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop) -> {
-            if (hsvBounds.within(conv360HSV(Color.RGBtoHSB(rgb[0], rgb[1], rgb[2], null)))) {
+            if (hsvBounds.within(conv360HSV(Color.RGBtoHSB(rgb[0], rgb[1], rgb[2], hColorArr), currHSV))) {
                 filterFn.accept(hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop);
-                pixels[index] = FILTERED_PIXEL;
+//                pixels[index] = FILTERED_PIXEL;
             } else {
                 elseFn.accept(hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop);
-                pixels[index] = NO_PIXEL;
+//                pixels[index] = NO_PIXEL;
             }
         });
 //        return pixels;
@@ -187,17 +206,22 @@ public class FrameParser {
                 (hPixels, col, row, index, rawRGB, rgb, colLoop, rawLoop) -> pixels[index] = NO_PIXEL);
     }
 
-    public static void filterHSV(int[] pixels, int width, int height, Predicate<double[]> hsvQualifier, OctaConsumer<int[], Integer, Integer, Integer, Integer, int[], ForIncrement, ForIncrement> filterFn, OctaConsumer<int[], Integer, Integer, Integer, Integer, int[], ForIncrement, ForIncrement> elseFn) {
+    public static void filterHSV(int[] pixels, int width, int height, Predicate<double[]> hsvQualifier, OctaConsumer<int[], Integer, Integer, Integer, Integer, double[], ForIncrement, ForIncrement> filterFn, OctaConsumer<int[], Integer, Integer, Integer, Integer, double[], ForIncrement, ForIncrement> elseFn) {
+        final double[] currHSV = new double[3];
+        float[] hColorArr = colorArr.get();
         new PixelIterator(pixels, width, height).execute((hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop) -> {
-            double[] hsv = conv360HSV(Color.RGBtoHSB(rgb[0], rgb[1], rgb[2], null));
-            if (hsvQualifier.test(hsv)) {
-                filterFn.accept(hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop);
-                pixels[index] = FILTERED_PIXEL;
+            conv360HSV(Color.RGBtoHSB(rgb[0], rgb[1], rgb[2], hColorArr), currHSV);
+            if (hsvQualifier.test(currHSV)) {
+                filterFn.accept(hPixels, col, row, index, rawRGB, currHSV, colLoop, rowLoop);
+//                pixels[index] = FILTERED_PIXEL;
             } else {
-                elseFn.accept(hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop);
-                pixels[index] = NO_PIXEL;
+                elseFn.accept(hPixels, col, row, index, rawRGB, currHSV, colLoop, rowLoop);
+//                pixels[index] = NO_PIXEL;
             }
         });
+    }
+    public static void filterHSV(int[] pixels, int width, int height, Predicate<double[]> hsvQualifier, OctaConsumer<int[], Integer, Integer, Integer, Integer, double[], ForIncrement, ForIncrement> filterFn) {
+        filterHSV(pixels, width, height, hsvQualifier, filterFn, (hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop) -> {});
     }
     public static void filterHSV(int[] pixels, int width, int height, Predicate<double[]> hsvQualifier, BiConsumer<Integer, Integer> filterFn, BiConsumer<Integer, Integer> elseFn) {
         filterHSV(pixels, width, height, hsvQualifier,
@@ -212,6 +236,144 @@ public class FrameParser {
                 (hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop) -> pixels[index] = FILTERED_PIXEL,
                 (hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop) -> pixels[index] = NO_PIXEL);
     }
+
+    public static void filterHSV(FastRGB image, HSVBounds hsvBounds, OctaConsumer<int[], Integer, Integer, Integer, Integer, int[], ForIncrement, ForIncrement> filterFn, OctaConsumer<int[], Integer, Integer, Integer, Integer, int[], ForIncrement, ForIncrement> elseFn) {
+        filterHSV(image.getPixels(), image.getWidth(), image.getHeight(), hsvBounds, filterFn, elseFn);
+    }
+    public static void filterHSV(FastRGB image, HSVBounds hsvBounds, OctaConsumer<int[], Integer, Integer, Integer, Integer, int[], ForIncrement, ForIncrement> filterFn) {
+        filterHSV(image.getPixels(), image.getWidth(), image.getHeight(), hsvBounds, filterFn, (hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop) -> {});
+    }
+    public static void filterHSV(FastRGB image, HSVBounds hsvBounds, BiConsumer<Integer, Integer> filterFn, BiConsumer<Integer, Integer> otherFn) {
+        filterHSV(image.getPixels(), image.getWidth(), image.getHeight(), hsvBounds, filterFn, otherFn);
+    }
+    public static void filterHSV(FastRGB image, HSVBounds hsvBounds, BiConsumer<Integer, Integer> fn) {
+        filterHSV(image.getPixels(), image.getWidth(), image.getHeight(), hsvBounds, fn);
+    }
+    public static void filterHSV(FastRGB image, HSVBounds hsvBounds) {
+        filterHSV(image.getPixels(), image.getWidth(), image.getHeight(), hsvBounds);
+    }
+    public static void filterHSV(FastRGB image, Predicate<double[]> hsvQualifier, OctaConsumer<int[], Integer, Integer, Integer, Integer, double[], ForIncrement, ForIncrement> filterFn, OctaConsumer<int[], Integer, Integer, Integer, Integer, double[], ForIncrement, ForIncrement> elseFn) {
+        filterHSV(image.getPixels(), image.getWidth(), image.getHeight(), hsvQualifier, filterFn, elseFn);
+    }
+    public static void filterHSV(FastRGB image, Predicate<double[]> hsvQualifier, OctaConsumer<int[], Integer, Integer, Integer, Integer, double[], ForIncrement, ForIncrement> filterFn) {
+        filterHSV(image.getPixels(), image.getWidth(), image.getHeight(), hsvQualifier, filterFn, (hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop) -> {});
+    }
+    public static void filterHSV(FastRGB image, Predicate<double[]> hsvQualifier, BiConsumer<Integer, Integer> filterFn, BiConsumer<Integer, Integer> elseFn) {
+        filterHSV(image.getPixels(), image.getWidth(), image.getHeight(), hsvQualifier, filterFn, elseFn);
+    }
+    public static void filterHSV(FastRGB image, Predicate<double[]> hsvQualifier, BiConsumer<Integer, Integer> filterFn) {
+        filterHSV(image.getPixels(), image.getWidth(), image.getHeight(), hsvQualifier, filterFn);
+    }
+    public static void filterHSV(FastRGB image, Predicate<double[]> hsvQualifier) {
+        filterHSV(image.getPixels(), image.getWidth(), image.getHeight(), hsvQualifier);
+    }
+
+
+    public static void filterHSV(
+            int[] pixels, int width, int height,
+            Predicate<double[]>[] hsvQualifiers,
+            OctaConsumer<int[], Integer, Integer, Integer, Integer, int[], ForIncrement, ForIncrement>[] filterFns,
+            OctaConsumer<int[], Integer, Integer, Integer, Integer, int[], ForIncrement, ForIncrement> elseFn
+    ) {
+        final double[] currHSV = new double[3];
+        final float[] hColorArr = colorArr.get();
+
+        new PixelIterator(pixels, width, height).execute((hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop) -> {
+            conv360HSV(Color.RGBtoHSB(rgb[0], rgb[1], rgb[2], hColorArr), currHSV);
+
+            for (int i = 0; i < hsvQualifiers.length; i++) {
+                if (hsvQualifiers[i].test(currHSV)) {
+                    filterFns[i].accept(hPixels, col, row, index, i, rgb, colLoop, rowLoop);
+                    return;
+                }
+            }
+            elseFn.accept(hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop);
+        });
+    }
+    public static void filterHSV(
+            int[] pixels, int width, int height,
+            Predicate<double[]>[] hsvQualifiers,
+            OctaConsumer<int[], Integer, Integer, Integer, Integer, int[], ForIncrement, ForIncrement>[] filterFns
+    ) {
+        filterHSV(pixels, width, height, hsvQualifiers, filterFns,
+                (hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop) -> {});
+    }
+
+    public static void filterHSV(
+            int[] pixels, int width, int height,
+            Predicate<double[]>[] hsvQualifiers,
+            BiConsumer<Integer, Integer>[] filterFns,
+            BiConsumer<Integer, Integer> elseFn
+    ) {
+        @SuppressWarnings("unchecked")
+        OctaConsumer<int[], Integer, Integer, Integer, Integer, int[], ForIncrement, ForIncrement>[] octaFns =
+                new OctaConsumer[filterFns.length];
+
+        for (int i = 0; i < filterFns.length; i++) {
+            final int fnIndex = i;
+            octaFns[i] = (hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop) ->
+                    filterFns[fnIndex].accept(col, row);
+        }
+
+        filterHSV(pixels, width, height, hsvQualifiers, octaFns,
+                (hPixels, col, row, index, rawRGB, rgb, colLoop, rowLoop) -> elseFn.accept(col, row));
+    }
+    public static void filterHSV(
+            int[] pixels, int width, int height,
+            Predicate<double[]>[] hsvQualifiers,
+            BiConsumer<Integer, Integer>[] filterFns
+    ) {
+        filterHSV(pixels, width, height, hsvQualifiers, filterFns, (col, row) -> {});
+    }
+    public static void filterHSV(
+            FastRGB image,
+            Predicate<double[]>[] hsvQualifiers,
+            OctaConsumer<int[], Integer, Integer, Integer, Integer, int[], ForIncrement, ForIncrement>[] filterFns,
+            OctaConsumer<int[], Integer, Integer, Integer, Integer, int[], ForIncrement, ForIncrement> elseFn
+    ) {
+        filterHSV(image.getPixels(), image.getWidth(), image.getHeight(), hsvQualifiers, filterFns, elseFn);
+    }
+    public static void filterHSV(
+            FastRGB image,
+            Predicate<double[]>[] hsvQualifiers,
+            OctaConsumer<int[], Integer, Integer, Integer, Integer, int[], ForIncrement, ForIncrement>[] filterFns
+    ) {
+        filterHSV(image.getPixels(), image.getWidth(), image.getHeight(), hsvQualifiers, filterFns);
+    }
+    public static void filterHSV(
+            int[] pixels, int width, int height,
+            Predicate<double[]>[] hsvQualifiers,
+            OctaConsumer<int[], Integer, Integer, Integer, Integer, int[], ForIncrement, ForIncrement> filterFn
+    ) {
+        final double[] currHSV = new double[3];
+        final float[] hColorArr = colorArr.get();
+        new PixelIterator(pixels, width, height).execute((hPixels, x, y, idx, rawRGB, rgb, colLoop, rowLoop) -> {
+            conv360HSV(Color.RGBtoHSB(rgb[0], rgb[1], rgb[2], hColorArr), currHSV);
+            for (int i = 0; i < hsvQualifiers.length; i++) {
+                if (hsvQualifiers[i].test(currHSV)) {
+                    filterFn.accept(hPixels, x, y, idx, i, rgb, colLoop, rowLoop);
+                }
+            }
+        });
+    }
+    public static void filterHSV(
+            FastRGB image,
+            Predicate<double[]>[] hsvQualifiers,
+            BiConsumer<Integer, Integer>[] filterFns,
+            BiConsumer<Integer, Integer> elseFn
+    ) {
+        filterHSV(image.getPixels(), image.getWidth(), image.getHeight(), hsvQualifiers, filterFns, elseFn);
+    }
+    public static void filterHSV(
+            FastRGB image,
+            Predicate<double[]>[] hsvQualifiers,
+            BiConsumer<Integer, Integer>[] filterFns
+    ) {
+        filterHSV(image.getPixels(), image.getWidth(), image.getHeight(), hsvQualifiers, filterFns);
+    }
+
+
+
 
 
 

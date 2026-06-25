@@ -823,7 +823,7 @@ public class EnhancedTreeMap<K, V> extends AbstractMap<K, V> implements Navigabl
         return super.values();
     }
 
-    public Set<Map.Entry<K, V>> entrySet() {
+    public EntrySet entrySet() {
         EntrySet es = entrySet;
         return (es != null) ? es : (entrySet = new EntrySet());
     }
@@ -867,8 +867,13 @@ public class EnhancedTreeMap<K, V> extends AbstractMap<K, V> implements Navigabl
         return tailMap(fromKey, true);
     }
 
-    class EntrySet extends AbstractSet<Map.Entry<K, V>> {
-        public Iterator<Map.Entry<K, V>> iterator() {
+
+    public class EntrySet extends AbstractSet<Map.Entry<K, V>> {
+        @Override
+        public BidirectionalEntryIterator iterator() {
+            return new BidirectionalEntryIterator(getFirstEntry());
+        }
+        public Iterator<Map.Entry<K, V>> classicIterator() {
             return new EntryIterator(getFirstEntry());
         }
 
@@ -897,6 +902,115 @@ public class EnhancedTreeMap<K, V> extends AbstractMap<K, V> implements Navigabl
         }
     }
 
+// Add inside EnhancedTreeMap
+
+    public final class BidirectionalEntryIterator implements Iterator<Map.Entry<K, V>> {
+        private Entry<K, V> next;
+        private Entry<K, V> previous;
+        private Entry<K, V> lastReturned;
+        private boolean lastMoveWasNext;
+        private int expectedModCount;
+
+        BidirectionalEntryIterator(Entry<K, V> first) {
+            this.next = first;
+            this.previous = null;
+            this.lastReturned = null;
+            this.lastMoveWasNext = false;
+            this.expectedModCount = modCount;
+        }
+
+        private void checkForComodification() {
+            if (modCount != expectedModCount) {
+                throw new ConcurrentModificationException();
+            }
+        }
+
+        @Override
+        public boolean hasNext() {
+            return next != null;
+        }
+
+        public boolean hasPrevious() {
+            return previous != null;
+        }
+
+        public Map.Entry<K, V> peekNext() {
+            checkForComodification();
+            if (next == null) {
+                throw new NoSuchElementException();
+            }
+            return next;
+        }
+
+        public Map.Entry<K, V> peekPrevious() {
+            checkForComodification();
+            if (previous == null) {
+                throw new NoSuchElementException();
+            }
+            return previous;
+        }
+
+        // Optional aliases if you want the spelling from your prompt
+        public Map.Entry<K, V> peakNext() {
+            return peekNext();
+        }
+
+        public Map.Entry<K, V> peakPrevious() {
+            return peekPrevious();
+        }
+
+        @Override
+        public Map.Entry<K, V> next() {
+            checkForComodification();
+            if (next == null) {
+                throw new NoSuchElementException();
+            }
+
+            Entry<K, V> e = next;
+            previous = e;                  // store exactly what next() just returned
+            next = successor(e);           // move forward using existing tree logic
+            lastReturned = e;
+            lastMoveWasNext = true;
+            return e;
+        }
+
+        public Map.Entry<K, V> previous() {
+            checkForComodification();
+            if (previous == null) {
+                throw new NoSuchElementException();
+            }
+
+            Entry<K, V> e = previous;
+            next = e;                      // cursor moves back so next() returns this again later
+            previous = predecessor(e);     // actual step backward
+            lastReturned = e;
+            lastMoveWasNext = false;
+            return e;
+        }
+
+        @Override
+        public void remove() {
+            checkForComodification();
+            if (lastReturned == null) {
+                throw new IllegalStateException();
+            }
+
+            Entry<K, V> removed = lastReturned;
+
+            if (lastMoveWasNext) {
+                if (removed.left != null && removed.right != null) {
+                    next = removed;
+                }
+                previous = predecessor(next == null ? getLastEntry() : next);
+            } else {
+                next = successor(removed);
+            }
+
+            deleteEntry(removed);
+            lastReturned = null;
+            expectedModCount = modCount;
+        }
+    }
     Iterator<K> keyIterator() {
         return new KeyIterator(getFirstEntry());
     }

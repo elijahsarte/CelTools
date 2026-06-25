@@ -597,5 +597,100 @@ public class ShapeBounds {
     public Map<Point, Integer> getColors() {
         return this.boundColors;
     }
+
+    public String toDebugDumpString() {
+        StringBuilder out = new StringBuilder();
+        out.append("CTSHAPEBOUNDS\t1\n");
+        out.append("BOUNDS\t").append(Base64.getEncoder().encodeToString(
+                (bounds == null ? new PointCollection() : bounds).toDebugDumpString().getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        )).append('\n');
+
+        out.append("BOUNDS_BDS_PRESENT\t").append(boundsBds != null).append('\n');
+        if (boundsBds == null) {
+            out.append("BOUNDS_BDS\t0\n");
+        } else {
+            out.append("BOUNDS_BDS\t").append(boundsBds.size()).append('\n');
+            boundsBds.forEach((x, bds) -> out.append("B\t")
+                    .append(x).append('\t')
+                    .append(bds.getLowerBound()).append('\t')
+                    .append(bds.getUpperBound()).append('\n'));
+        }
+
+        out.append("BOUND_COLORS_PRESENT\t").append(boundColors != null).append('\n');
+        if (boundColors == null) {
+            out.append("BOUND_COLORS\t0\n");
+        } else {
+            out.append("BOUND_COLORS\t").append(boundColors.size()).append('\n');
+            boundColors.forEach((point, argb) -> out.append("C\t")
+                    .append(point.x).append('\t')
+                    .append(point.y).append('\t')
+                    .append(argb).append('\n'));
+        }
+        return out.toString();
+    }
+
+    public static ShapeBounds fromDebugDumpString(String dump) {
+        if (dump == null) {
+            throw new IllegalArgumentException("ShapeBounds debug dump cannot be null");
+        }
+        String[] lines = dump.split("\\R", -1);
+        if (lines.length == 0 || !"CTSHAPEBOUNDS\t1".equals(lines[0])) {
+            throw new IllegalArgumentException("Not a ShapeBounds debug dump");
+        }
+
+        PointCollection decodedBounds = new PointCollection();
+        TreeMap<Integer, IntegerBounds> decodedBds = null;
+        Map<Point, Integer> decodedColors = null;
+        boolean bdsPresent = false;
+        boolean colorsPresent = false;
+
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i];
+            if (line == null || line.isEmpty()) continue;
+            String[] parts = line.split("\\t", 5);
+            if (parts.length == 0) continue;
+
+            switch (parts[0]) {
+                case "BOUNDS" -> {
+                    if (parts.length < 2) throw new IllegalArgumentException("Malformed ShapeBounds BOUNDS line");
+                    String pointDump = new String(Base64.getDecoder().decode(parts[1]), java.nio.charset.StandardCharsets.UTF_8);
+                    decodedBounds = PointCollection.fromDebugDumpString(pointDump);
+                }
+                case "BOUNDS_BDS_PRESENT" -> {
+                    bdsPresent = parts.length >= 2 && Boolean.parseBoolean(parts[1]);
+                    if (bdsPresent && decodedBds == null) decodedBds = new TreeMap<>();
+                }
+                case "BOUNDS_BDS" -> {
+                    int count = parts.length >= 2 ? Integer.parseInt(parts[1]) : 0;
+                    decodedBds = (count > 0 || bdsPresent) ? new TreeMap<>() : null;
+                }
+                case "B" -> {
+                    if (parts.length < 4) throw new IllegalArgumentException("Malformed ShapeBounds bounds line: " + line);
+                    if (decodedBds == null) decodedBds = new TreeMap<>();
+                    decodedBds.put(Integer.parseInt(parts[1]), new IntegerBounds(Integer.parseInt(parts[2]), Integer.parseInt(parts[3])));
+                }
+                case "BOUND_COLORS_PRESENT" -> {
+                    colorsPresent = parts.length >= 2 && Boolean.parseBoolean(parts[1]);
+                    if (colorsPresent && decodedColors == null) decodedColors = new HashMap<>();
+                }
+                case "BOUND_COLORS" -> {
+                    int count = parts.length >= 2 ? Integer.parseInt(parts[1]) : 0;
+                    decodedColors = (count > 0 || colorsPresent) ? new HashMap<>() : null;
+                }
+                case "C" -> {
+                    if (parts.length < 4) throw new IllegalArgumentException("Malformed ShapeBounds color line: " + line);
+                    if (decodedColors == null) decodedColors = new HashMap<>();
+                    decodedColors.put(new Point(Integer.parseInt(parts[1]), Integer.parseInt(parts[2])), Integer.parseInt(parts[3]));
+                }
+                default -> throw new IllegalArgumentException("Unknown ShapeBounds dump line: " + line);
+            }
+        }
+
+        ShapeBounds shapeBounds = new ShapeBounds(decodedBounds);
+        shapeBounds.boundsBds = decodedBds;
+        shapeBounds.boundColors = decodedColors;
+        return shapeBounds;
+    }
+
 }
 

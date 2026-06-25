@@ -15,10 +15,12 @@ public final class CPF extends ProgramPage {
     @Override
     public List<ProgramArg> args() {
         return ProgramArg.ofAll(
-                "Cel", "cel", "file",
+                "All cel(s)", "all-cels", "file",
                 "Paint specimen", "paint-specimen", "file",
                 "Paint image", "paint-image", "file",
-                "Output cel", "output-cel", "file"
+                "Paint specimens by color", "paint-specimens", "map-rgb-file",
+                "All painted cels", "all-painted-cels", "directory",
+                "Output cel(s)", "output-cel", "file"
         );
     }
     @Override

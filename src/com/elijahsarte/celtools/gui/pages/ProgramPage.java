@@ -1,11 +1,10 @@
 package com.elijahsarte.celtools.gui.pages;
 
-import static com.elijahsarte.celtools.main.util.ProgrammingEx.*;
-
 import com.elijahsarte.celtools.gui.windows.ColorPicker;
+import com.elijahsarte.celtools.gui.windows.InputMapEditor;
 import com.elijahsarte.celtools.main.Main;
-import com.elijahsarte.celtools.main.util.MathEx;
 import com.elijahsarte.celtools.main.util.ConstructionEx;
+import com.elijahsarte.celtools.main.util.MathEx;
 import com.elijahsarte.celtools.main.util.OptionalEx;
 import com.elijahsarte.celtools.main.util.StreamEx;
 
@@ -13,17 +12,25 @@ import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
-import java.util.*;
+import java.io.File;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Supplier;
 import java.util.prefs.Preferences;
 import java.util.stream.IntStream;
 
 import static com.elijahsarte.celtools.gui.Application.prefs;
+import static com.elijahsarte.celtools.main.util.ProgrammingEx.noExcept;
+import static com.elijahsarte.celtools.main.util.ProgrammingEx.varMutate;
 
 public abstract class ProgramPage extends JPanel {
 
     private final Map<String, Supplier<String>> argFn = new HashMap<>();
+
+    protected String chooserScopeKey() {
+        return name().replaceAll("\\s*\\(.*\\)$", "").trim();
+    }
 
 
     public ProgramPage() {
@@ -46,8 +53,7 @@ public abstract class ProgramPage extends JPanel {
 
             String name = arg.argName();
             String id = name() + "_" + name;
-            String stored = prefs.get(id, "");
-            boolean storedMult = prefs.getBoolean(id + "_mult", false);
+            String stored = storedValue(id);
 
             JTextField complField = varMutate(new JTextField(17), f -> f.setText(stored));
             complField.getDocument().addDocumentListener(new DocumentListener() {
@@ -99,10 +105,11 @@ public abstract class ProgramPage extends JPanel {
                     gbc.weightx = 0;
 
                     add(varMutate(new JButton("Browse..."), b -> b.addActionListener(e -> {
-                        JFileChooser chooser = varMutate(new JFileChooser(prefs.get(name() + "_lastDir", null)), c -> c.setFileSelectionMode(arg.type().equals("directory") ? JFileChooser.DIRECTORIES_ONLY : JFileChooser.FILES_AND_DIRECTORIES));
+                        JFileChooser chooser = varMutate(Main.chooserFor(chooserScopeKey()), c -> c.setFileSelectionMode(arg.type().equals("directory") ? JFileChooser.DIRECTORIES_ONLY : JFileChooser.FILES_AND_DIRECTORIES));
                         if (chooser.showOpenDialog(ProgramPage.this) == JFileChooser.APPROVE_OPTION) {
-                            prefs.put(name() + "_lastDir", chooser.getSelectedFile().getParentFile().getAbsolutePath());
-                            complField.setText(chooser.getSelectedFile().getAbsolutePath());
+                            File selectedFile = chooser.getSelectedFile();
+                            Main.rememberChooserDirectory(chooserScopeKey(), selectedFile, arg.type().equals("directory"));
+                            complField.setText(selectedFile.getAbsolutePath());
                         }
                     })), gbc);
                     break;
@@ -112,22 +119,32 @@ public abstract class ProgramPage extends JPanel {
                     add(complField, gbc);
                     gbc.gridx = 2;
                     add(varMutate(new JButton("Pick"), b -> b.addActionListener(e ->
-                            ColorPicker.pickColor(b).thenAccept(c -> complField.setText("{" + c.getRed() + "," + c.getBlue() + "," + c.getGreen() + "}"))
+                            ColorPicker.pickColor(b).thenAccept(c -> complField.setText("{" + c.getRed() + "," + c.getGreen() + "," + c.getBlue() + "}"))
                     )), gbc);
                     break;
                 default:
-                    gbc.gridwidth = 2;
-                    if (storedMult) {
-                        StringBuilder stitched = new StringBuilder();
-                        String currPiece;
-                        int pI = 0;
-                        while ((currPiece = prefs.get(id + "_piece_" + pI, null)) != null) {
-                            stitched.append(currPiece);
-                            pI++;
-                        }
-                        complField.setText(stitched.toString());
+                    if (arg.type().startsWith("map-") && arg.type().substring(4).split("-", -1).length == 2) {
+                        String[] mapTypes = arg.type().substring(4).split("-", -1);
+                        gbc.gridwidth = 1;
+                        JButton editMapButton = new JButton("Edit map...");
+                        add(editMapButton, gbc);
+
+                        gbc.gridx = 2;
+                        JCheckBox mapEnabled = new JCheckBox("Enabled", prefs.getBoolean(id + "_enabled", false));
+                        add(mapEnabled, gbc);
+                        editMapButton.setEnabled(mapEnabled.isSelected());
+                        mapEnabled.addChangeListener(e -> {
+                            prefs.putBoolean(id + "_enabled", mapEnabled.isSelected());
+                            editMapButton.setEnabled(mapEnabled.isSelected());
+                        });
+                        editMapButton.addActionListener(e -> InputMapEditor.edit(
+                                editMapButton, complField.getText(), mapTypes[0], mapTypes[1], chooserScopeKey()
+                        ).thenAccept(complField::setText));
+                        argFn.put(name, () -> mapEnabled.isSelected() ? complField.getText() : "");
+                    } else {
+                        gbc.gridwidth = 2;
+                        add(complField, gbc);
                     }
-                    add(complField, gbc);
                     break;
             }
             if (!argFn.containsKey(name)) argFn.put(name, complField::getText);
@@ -136,6 +153,19 @@ public abstract class ProgramPage extends JPanel {
             gbc.weightx = 0;
         });
 
+    }
+
+    private static String storedValue(String id) {
+        if (!prefs.getBoolean(id + "_mult", false)) return prefs.get(id, "");
+
+        StringBuilder stitched = new StringBuilder();
+        String piece;
+        int pieceIndex = 0;
+        while ((piece = prefs.get(id + "_piece_" + pieceIndex, null)) != null) {
+            stitched.append(piece);
+            pieceIndex++;
+        }
+        return stitched.toString();
     }
 
 

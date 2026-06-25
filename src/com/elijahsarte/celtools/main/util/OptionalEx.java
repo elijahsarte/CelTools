@@ -106,6 +106,10 @@ public final class OptionalEx<T> {
             Arrays.stream(conds).allMatch(c -> c.test(tv))
         );
     }
+
+    public static <T> OptionalEx<T> ofNullable(T t) {
+        return new OptionalEx<>(t, Predicate.not(Objects::isNull));
+    }
     /*public static <T> OptionalEx<T> ofConds(T t, boolean... conds) {
         return new OptionalEx<>(t, conds);
     }*/

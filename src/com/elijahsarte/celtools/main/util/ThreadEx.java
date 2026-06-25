@@ -15,7 +15,7 @@ public final class ThreadEx {
     }
 
     public static void stop(Thread thread) {
-        noExcept(() -> thread.stop());
+        noExcept(thread::stop);
     }
     public static <T> void stop(CompletableFuture<T> future) throws NoSuchFieldException, IllegalAccessException {
         future.cancel(true);
@@ -38,6 +38,18 @@ public final class ThreadEx {
 
     public static Optional<StackWalker.StackFrame> getCaller() {
         return StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE).walk(frames -> frames.skip(1).findFirst());
+    }
+
+    public static Throwable getRootCause(Throwable throwable) {
+        if (throwable == null) {
+            return null;
+        }
+
+        Throwable root = throwable;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        return root;
     }
 
 }

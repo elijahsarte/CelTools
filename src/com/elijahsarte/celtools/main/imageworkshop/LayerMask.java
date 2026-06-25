@@ -14,11 +14,15 @@ public class LayerMask {
     private FastRGB image;
 
     public LayerMask(FastRGB image) {
-        this.image = Filter.copyPixels(Objects.requireNonNull(image, "image"));
+//        this.image = Filter.copyPixels(Objects.requireNonNull(image, "image"));
+        this.image = Objects.requireNonNull(image, "image");
     }
 
+    public LayerMask(BufferedImage image, boolean copy) {
+        this(new FastRGB(image, copy));
+    }
     public LayerMask(BufferedImage image) {
-        this(Filter.copyPixels(image));
+        this(image, true);
     }
 
     public LayerMask(LayerMask other) {

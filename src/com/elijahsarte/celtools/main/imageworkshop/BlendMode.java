@@ -180,7 +180,8 @@ public enum BlendMode {
     }
 
     private static int div255Round(int value) {
-        return (value + 127) / 255;
+        value += 128;
+        return (value + (value >> 8)) >> 8;
     }
 
     private static int divRound(long numerator, int denominator) {

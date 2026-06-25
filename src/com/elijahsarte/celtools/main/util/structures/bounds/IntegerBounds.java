@@ -134,6 +134,11 @@ public class IntegerBounds {
         return getLowerBound() == l && getUpperBound() == u;
     }
 
+    @Override
+    public String toString() {
+        return "[" + lowerBound + ", " + upperBound + "]";
+    }
+
     // Newly added methods
     public List<Integer> asList() {
         return List.of(lowerBound, upperBound);

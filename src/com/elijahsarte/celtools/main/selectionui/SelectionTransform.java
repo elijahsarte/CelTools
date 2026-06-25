@@ -29,6 +29,9 @@ public record SelectionTransform(double scaleRatio, double offsetX, double offse
     public Rectangle apply(Rectangle rect) {
         return rect == null ? null : new Rectangle((int) applyX(rect.getX()), (int) applyY(rect.getY()), (int) (rect.getWidth() * scaleRatio), (int) (rect.getHeight() * scaleRatio));
     }
+    public Point apply(Point point) {
+        return point == null ? null : new Point((int) Math.round(applyX(point.getX())), (int) Math.round(applyY(point.getY())));
+    }
 
     private double validatedScale() {
         if (scaleRatio == 0) {
@@ -51,6 +54,12 @@ public record SelectionTransform(double scaleRatio, double offsetX, double offse
                 (int) Math.round(unapplyY(rect.getY())),
                 (int) Math.round(rect.getWidth() / scale),
                 (int) Math.round(rect.getHeight() / scale)
+        );
+    }
+    public Point unapply(Point point) {
+        return point == null ? null : new Point(
+                (int) Math.round(unapplyX(point.getX())),
+                (int) Math.round(unapplyY(point.getY()))
         );
     }
 

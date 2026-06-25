@@ -86,7 +86,7 @@ public class ColorSampleDataModel {
         this.averageHSV = new double[]{MathEx.divide(avgHueRad, (2 * Math.PI)), MathEx.divide(sumS, length), MathEx.divide(sumV, length)};
 //        IntStream.rangeClosed(limMod(rawHSV.firstKey(), HUE_BUCKET_SIZE), nextMod(rawHSV.lastKey(), HUE_BUCKET_SIZE)).filter(i -> )
 //        IntStream.rangeClosed(rawHSV.firstKey(), nextMod(rawHSV.lastKey(), HUE_BUCKET_SIZE)).filter(i -> !rawHSV.containsKey(i)/* && (!rawHSVrawHSV.containsKey(MathEx.limMod(i, HUE_BUCKET_SIZE))*//*).forEach(i -> rawHSV.put(i, rawHSV.get(divisible(i, HUE_BUCKET_SIZE) ? i - HUE_BUCKET_SIZE : limMod(i, HUE_BUCKET_SIZE))));*/
-        this.boundsHSV = new HSVBounds(StreamEx.toMap(rawHSV.entrySet().stream().flatMap(e -> StreamEx.modRange(e.getKey(), HUE_BUCKET_SIZE).mapToObj(i -> Map.entry(i, e.getValue()))), TreeMap::new));
+        this.boundsHSV = new HSVBounds((TreeMap<Integer, PointCollection>) StreamEx.toMap(rawHSV.entrySet().stream().flatMap(e -> StreamEx.modRange(e.getKey(), HUE_BUCKET_SIZE).mapToObj(i -> Map.entry(i, e.getValue()))), TreeMap::new));
     }
 
 

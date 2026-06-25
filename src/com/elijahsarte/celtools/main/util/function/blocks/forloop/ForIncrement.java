@@ -64,11 +64,12 @@ public class ForIncrement extends ForLoopBase {
         }
     }
     public void execute(BiConsumer<Double, ForIncrement> body) {
-        double places = MathEx.divide(1, BigDecimal.valueOf(increment).scale() * 10);
+        boolean isWhole = MathEx.isWhole(increment);
+        double places = isWhole ? 0 : MathEx.divide(1, BigDecimal.valueOf(increment).scale() * 10);
         for (position = start; position < end; position += increment) {
             this.Continue = false;
             this.Break = false;
-            position = MathEx.round(position, places);
+            if (!isWhole) position = MathEx.round(position, places);
             body.accept(position, this);
 
             if (this.Continue) continue;

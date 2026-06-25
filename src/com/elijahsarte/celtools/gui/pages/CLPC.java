@@ -1,16 +1,16 @@
 package com.elijahsarte.celtools.gui.pages;
 
-import com.elijahsarte.celtools.CelPaintCombine;
+import com.elijahsarte.celtools.CelLayerPartCombine;
 import com.elijahsarte.celtools.main.Main;
 
 import java.util.List;
 import java.util.function.Supplier;
 
-public final class CPCO extends ProgramPage {
+public final class CLPC extends ProgramPage {
 
     @Override
     public String name() {
-        return "CelPaintCombine";
+        return "CelLayerPartCombine";
     }
     @Override
     public List<ProgramArg> args() {
@@ -24,7 +24,7 @@ public final class CPCO extends ProgramPage {
 
     @Override
     public Supplier<? extends Main> program() {
-        return () -> new CelPaintCombine(programArgs());
+        return () -> new CelLayerPartCombine(programArgs());
     }
 
 }
